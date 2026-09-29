@@ -291,10 +291,10 @@ class Profile(Base):
             from agent_harness.mcp import kb  # noqa: F401
         except ImportError:
             return
-        self.assertIn("## Knowledge index (fetch a section with kb_get <id>)", rules)
+        self.assertIn("## Knowledge index\n", rules)
         index = rules.split("## Knowledge index", 1)[1]
         self.assertIn("SERVER.md", index)
-        self.assertIn("rules.md", index)  # the whole active profile folder is indexed
+        self.assertNotIn("rules.md", index)  # the extra-rules file is in the rules already
 
     def test_descriptor_pointer_replaces_the_marker(self):
         (self.src / "content" / "AGENTS.md").write_text("# R\n\n## Environment\n\n<!-- harness:descriptor -->\nfallback\n")

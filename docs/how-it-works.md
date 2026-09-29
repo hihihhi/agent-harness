@@ -24,14 +24,21 @@ tools split every Markdown or text file into sections at its headings and index 
 full-text search with BM25 ranking, with a pure-Python fallback).
 
 1. The agent looks at the Knowledge index already in its rules and picks the matching section id.
-2. It calls `kb_get(id)` and receives just that section, capped in size.
+2. It calls `kb_get(id)` and receives just that section, capped in size. `kb_get(page)` (a page
+   name alone, or its first section) lists that page's section ids, so a page-level id leads
+   straight to the section wanted.
 3. Only when nothing in the index fits does it call `kb_search(query)`, which returns section
    ids, titles, a one-line snippet and each section's size in bytes, so the agent can choose
    what is worth fetching.
 
-`kb_toc(path)` returns a document's heading tree without any bodies. The index covers your
-profile's `kb_paths`, the harness content, and the current project's `README.md`, `AGENTS.md`
-and `docs/`. It rebuilds itself when files change.
+`kb_toc(path)` returns a document's heading tree without any bodies. The knowledge covers your
+profile's own files and `kb_paths`, plus, when the session runs inside a git project (never your
+home folder itself), that project's `README.md`, `AGENTS.md` and `docs/`. Nothing from an
+unrelated working directory is indexed. It rebuilds itself when files change.
+
+The index in the rules is compact: one line per page the profile names in `index_pages`, with
+that page's level-2 section ids, then one line naming every other page. Every id printed there
+is exactly the id `kb_get` resolves.
 
 ## Memory across sessions and tools
 
@@ -73,11 +80,11 @@ relevant lessons, so the same mistake is not made twice, in any tool. Lessons ar
 
 Long tasks outgrow the context window. When a tool compacts or resets the conversation, the
 agent loses its working notes unless they were written down. The rules make the agent call
-`state_save` at each milestone with a short (at most 4 KB) record: goal, decisions and why, what
-is done with its evidence, what is next, open questions, key files. After a compaction or in a
-new session it calls `state_load` first. Claude Code re-injects the saved state automatically
-after compaction through a hook; other tools follow the same rule from the rulebook. State is
-only for work in progress: lasting facts go to memory and mistakes go to lessons.
+`state_save` for unfinished multi-step work with a short (at most 4 KB) record: goal, stage,
+decisions, what is next, key files. After a compaction it calls `state_load`. Claude Code injects
+the saved state at session start, resume and compaction through a hook, and only when a state file
+exists (nothing, and no tokens, otherwise); other tools follow the rule. One-shot questions need
+neither. State is only for work in progress: lasting facts go to memory and mistakes go to lessons.
 
 ## The harness: hooks and checks
 
@@ -89,8 +96,16 @@ The rules ask for good behaviour; the harness enforces a floor where the tool al
   unknown hosts; force-pushes to `main`/`master`; reading SSH keys or credential files; `sudo`.
   It uses only the Python standard library, adds about 40 ms per command, and is also a plain checker:
   `guard.py --check "<command>"`. It is a seat belt, not a sandbox.
-- **Finish check** (Claude Code): when the agent stops after editing files, it is reminded once to
-  run the project's checks and report the result, and to save its state if unfinished.
+- **`run_checks`** (MCP tool, every tool): finds the project's own tests (pytest, npm, make,
+  unittest), runs them and returns only the failures and the summary, at most 2 KB. It records the
+  result and a fingerprint of the project's files.
+- **Finish gate** (Claude Code): when the agent stops after editing files and no passing
+  `run_checks` covers the files as they are now, it is sent back once to run the checks or say why
+  not. It never loops. (Without `run_checks`: a one-time reminder to run the checks.)
+- **Check guard** (`content/hooks/check_guard.py`, Claude Code): an edit to an existing test or gate
+  that removes an assertion, adds a skip/xfail/only, or changes a tolerance is put to you first.
+  New test files and edits that keep every assertion pass untouched.
+- For A/B evaluations, `HARNESS_DISABLE=run_checks,check_guard` switches either off.
 - **Memory recall** (Claude Code): relevant memories are attached to each prompt, within a strict
   time limit, so the agent does not need to search for them.
 

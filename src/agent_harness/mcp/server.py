@@ -14,22 +14,25 @@ from typing import Any, Callable, Dict, Optional
 
 if __package__ in (None, ""):  # executed as a script: make `agent_harness` importable
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from agent_harness import __version__  # type: ignore
+    from agent_harness.mcp import checks  # type: ignore
     from agent_harness.mcp.kb import KB, harness_home  # type: ignore
     from agent_harness.mcp.memory import Memory  # type: ignore
     from agent_harness.mcp.state import State  # type: ignore
 else:
+    from .. import __version__
+    from . import checks
     from .kb import KB, harness_home
     from .memory import Memory
     from .state import State
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 LATEST = PROTOCOL_VERSIONS[0]
-SERVER_INFO = {"name": "harness", "version": "0.1.0"}
+SERVER_INFO = {"name": "harness", "version": __version__}
 INSTRUCTIONS = (
-    "Partial retrieval: never read whole documents. Call kb_index once to see every section id "
-    "(or kb_search <words>), then kb_get only the ids you need; every result reports its bytes. "
-    "Check lesson_search before a risky task, lesson_add after a failure or correction, "
-    "mem_add for durable facts the user states."
+    "Knowledge: pick a section id from the Knowledge index in your rules and kb_get it (kb_get <page> "
+    "lists a page's sections); kb_search only when nothing there fits. Memory: mem_search before answering "
+    "about the user's own setup or past decisions; mem_add when told to remember something."
 )
 # HARNESS_HOME/notices.json = {"notices": ["one line", ...]}: written by whatever installed the harness
 # (an organisation's own wrapper, e.g. "AI tools update available (v0.1.0 -> v0.2.0): run `igsl ai update`"),
@@ -76,68 +79,65 @@ def _s(**props) -> dict:
 
 
 TOOLS = [
-    {"name": "kb_index",
-     "description": "Compact list of every knowledge section (`id — title`, grouped by page); read it once, "
-                    "then kb_get only the ids you need.",
-     "inputSchema": _s(max_bytes={"type": "integer", "default": 8000})},
     {"name": "kb_search",
-     "description": "BM25 search over the knowledge base returning ids, one-line snippets and bytes; search "
-                    "first, then kb_get only the ids you need.",
+     "description": "Search the knowledge base: section ids, one-line snippets and bytes. Use only when the "
+                    "Knowledge index in your rules has no fitting id; then kb_get the ids you need.",
      "inputSchema": _s(query={"type": "string", "_req": True}, k={"type": "integer", "default": 5},
                        min_score={"type": "number", "description": "0..1; weaker matches are dropped"})},
     {"name": "kb_get",
-     "description": "Fetch ONE section by id (from kb_index/kb_search), truncated at max_bytes; never fetch "
-                    "sections you have not chosen.",
+     "description": "Fetch ONE section by id (<page>#<slug>). A page name alone returns its section ids.",
      "inputSchema": _s(id={"type": "string", "_req": True},
                        max_bytes={"type": "integer", "default": 8000})},
     {"name": "kb_toc",
-     "description": "Headings tree (ids, titles, bytes; no bodies) of one page, or with no path a one-line-"
-                    "per-page list; use it to pick sections, then kb_get them.",
+     "description": "Headings tree (ids, titles, bytes) of one page; with no path, the list of pages.",
      "inputSchema": _s(path={"type": "string", "default": ""})},
     {"name": "mem_add",
-     "description": "Remember one short durable fact (near-duplicates are merged, not repeated); store facts, "
-                    "not transcripts.",
+     "description": "Remember one short durable fact the user stated (near-duplicates are merged).",
      "inputSchema": _s(text={"type": "string", "_req": True},
                        tags={"type": "array", "items": {"type": "string"}, "default": []},
                        scope={"type": "string", "enum": ["user", "project"], "default": "user"},
                        pin={"type": "boolean", "default": False,
                             "description": "only when the user explicitly asks: shown at every session start"})},
     {"name": "mem_search",
-     "description": "Find remembered facts relevant to the task (weak matches return nothing); ask for a few "
-                    "(k) rather than many.",
+     "description": "Find remembered facts about the user's own setup, folders, preferences or past decisions.",
      "inputSchema": _s(query={"type": "string", "_req": True}, k={"type": "integer", "default": 5},
                        min_score={"type": "number"})},
     {"name": "mem_forget",
-     "description": "Forget a remembered fact or lesson by id when it is wrong or stale (it is archived, "
-                    "not deleted).",
+     "description": "Forget a remembered fact or lesson by id when it is wrong or stale (archived, not deleted).",
      "inputSchema": _s(id={"type": "string", "_req": True})},
     {"name": "lesson_add",
-     "description": "Record a lesson right after a failure or a user correction: what went wrong, the fix, "
-                    "and the situation that should trigger recalling it.",
+     "description": "After a check failed and then passed, or the user corrected you: the mistake, the fix, "
+                    "and when to recall it.",
      "inputSchema": _s(mistake={"type": "string", "_req": True}, fix={"type": "string", "_req": True},
                        trigger={"type": "string", "_req": True})},
     {"name": "lesson_search",
-     "description": "Before a non-trivial or risky step, look up past lessons that match what you are about "
-                    "to do.",
+     "description": "Past lessons that match a risky step you are about to take.",
      "inputSchema": _s(query={"type": "string", "_req": True}, k={"type": "integer", "default": 3},
                        min_score={"type": "number"})},
     {"name": "state_save",
-     "description": "Save this project's working state so nothing is lost when context compacts (<=4096 bytes, "
-                    "replaces the last save); use sections: Goal / Stage (analyse|research|plan|execute|evaluate) / "
-                    "Decisions / Done / Next / Open questions / Key files.",
+     "description": "Save unfinished multi-step work (<=4096 bytes, replaces the last save): goal, stage, "
+                    "decisions, next, key files.",
      "inputSchema": _s(text={"type": "string", "_req": True}, project={"type": "string", "default": ""})},
     {"name": "state_load",
-     "description": "Read this project's saved working state (after compaction or at session start) before "
-                    "re-deriving anything.",
+     "description": "Read this project's saved working state (after a compaction, or to resume work).",
      "inputSchema": _s(project={"type": "string", "default": ""})},
     {"name": "session_note",
-     "description": "At the end of a session, append one line (<=300 chars) saying what was done and what is "
-                    "next.",
+     "description": "Only when files changed: one line (<=300 chars) on what was done and what is next.",
      "inputSchema": _s(summary={"type": "string", "_req": True})},
     {"name": "session_recent",
-     "description": "The last k session notes for this project; a cheap way to see recent history.",
+     "description": "The last k session notes for this project.",
      "inputSchema": _s(k={"type": "integer", "default": 5})},
+    {"name": "run_checks",
+     "description": "Run this project's own tests/checks (found automatically, or cmd) and return only the "
+                    "failures and the summary (<=2 KB). Use after your last edit.",
+     "inputSchema": _s(cmd={"type": "string", "default": "", "description": "a check command, when none is found"},
+                       timeout={"type": "integer", "default": 300})},
 ]
+
+
+def tool_list() -> list:
+    """The advertised tools; HARNESS_DISABLE=run_checks hides that one (A/B arm switch)."""
+    return [t for t in TOOLS if not checks.disabled(t["name"])]
 
 
 class Server:
@@ -170,7 +170,6 @@ class Server:
         """Run a tool in-process and return its Python result."""
         a = dict(args or {})
         table: Dict[str, Callable[[], Any]] = {
-            "kb_index": lambda: self.kb.build_index(int(a.get("max_bytes", 8000))),
             "kb_search": lambda: self.kb.search(a["query"], int(a.get("k", 5)), a.get("min_score")),
             "kb_get": lambda: self.kb.get(a["id"], int(a.get("max_bytes", 8000))),
             "kb_toc": lambda: self.kb.toc(a.get("path", "") or ""),
@@ -184,6 +183,8 @@ class Server:
             "state_load": lambda: self.state.state_load(a.get("project", "") or ""),
             "session_note": lambda: self.state.session_note(a["summary"]),
             "session_recent": lambda: self.state.session_recent(int(a.get("k", 5))),
+            "run_checks": lambda: checks.run_checks(a.get("cmd", "") or "", int(a.get("timeout", 300)),
+                                                    home=self._home),
         }
         if name not in table:
             raise LookupError(name)
@@ -197,6 +198,11 @@ class Server:
             if result.get("next_part"):
                 head += "; continues in %s" % result["next_part"]
             return head + "\n" + result["text"]
+        if name == "run_checks":
+            if result.get("exit") is None:
+                return result["output"]
+            return "exit %s: %s (%s s, %d bytes of output)\n%s" % (
+                result["exit"], result["command"], result.get("seconds"), result.get("output_bytes", 0), result["output"])
         if isinstance(result, str):
             return result
         return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
@@ -222,10 +228,10 @@ class Server:
             elif method == "ping":
                 result = {}
             elif method == "tools/list":
-                result = {"tools": TOOLS}
+                result = {"tools": tool_list()}
             elif method == "tools/call":
                 name = params.get("name")
-                if name not in {t["name"] for t in TOOLS}:
+                if name not in {t["name"] for t in tool_list()}:
                     return None if is_note else _err(mid, -32602, "Unknown tool: %s" % name)
                 try:
                     out = self.call_tool(name, params.get("arguments") or {})

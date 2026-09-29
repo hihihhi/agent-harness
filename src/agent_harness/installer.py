@@ -286,17 +286,66 @@ def _owned(path: Tuple[str, ...], tables: List[Tuple[str, ...]]) -> bool:
 
 
 def toml_remove(text: str, names: List[str]) -> Tuple[str, str]:
-    """Remove our tables (and their sub-tables). Returns (rest, removed-text)."""
-    tables = [_norm_table(n) for n in names]
+    """Remove our tables (and their sub-tables). Returns (rest, removed-text). A shared "+name" table is
+    removed only as a whole block here (toml_merge re-adds it with the user's keys)."""
+    tables = [_norm_table(n[1:] if n.startswith(SHARED) else n) for n in names]
     keep, gone = [], []
     for path, raw in _split_blocks(text):
         (gone if path is not None and _owned(path, tables) else keep).append(raw)
     return "".join(keep), "".join(gone)
 
 
+def toml_unmerge(text: str, patch: Dict[str, dict], orig: str) -> str:
+    """Take one patch out of `text`: plain tables go (the original's copy comes back); from a shared
+    "+name" table only our keys go, each put back to the original's value when it had one."""
+    whole = [n for n in patch if not n.startswith(SHARED)]
+    rest, _ = toml_remove(text, whole)
+    if orig:
+        _, ours_before = toml_remove(orig, whole)
+        if ours_before:
+            rest = rest + ("" if rest.endswith("\n") or not rest else "\n") + ours_before
+    for n, body in patch.items():
+        if not n.startswith(SHARED):
+            continue
+        name = n[1:]
+        was = _existing(orig, name) if orig else {}
+        cur = {k: v for k, v in _existing(rest, name).items() if k not in body}
+        cur.update({k: was[k] for k in body if k in was})
+        rest, _ = toml_remove(rest, [name])
+        if cur:
+            if rest and not rest.endswith("\n"):
+                rest += "\n"
+            rest += ("\n" if rest.strip() else "") + toml_table(name, cur)
+    return rest
+
+
+# A table name starting with "+" (e.g. "+features") is SHARED with the user: our keys are merged into
+# their table and their other keys stay; uninstall takes out only our keys. Plain names are ours whole.
+SHARED = "+"
+
+
+def _table_body(raw: str, path: Tuple[str, ...]) -> dict:
+    d = load_toml(raw)
+    for part in path:
+        d = d.get(part, {}) if isinstance(d, dict) else {}
+    return {k: v for k, v in d.items() if not isinstance(v, dict)} if isinstance(d, dict) else {}
+
+
+def _existing(text: str, name: str) -> dict:
+    path = _norm_table(name)
+    for bpath, raw in _split_blocks(text):
+        if bpath == path:
+            return _table_body(raw, path)
+    return {}
+
+
 def toml_merge(text: str, tables: Dict[str, dict]) -> str:
+    bodies = {}
+    for n, b in tables.items():
+        name = n[1:] if n.startswith(SHARED) else n
+        bodies[name] = {**_existing(text, name), **b} if n.startswith(SHARED) else b
     rest, _ = toml_remove(text, list(tables))
-    add = "\n".join(toml_table(n, b) for n, b in tables.items())
+    add = "\n".join(toml_table(n, b) for n, b in bodies.items())
     if rest and not rest.endswith("\n"):
         rest += "\n"
     if rest.strip():
@@ -414,16 +463,27 @@ def dir_size(p: Path) -> int:
 
 # ---------------------------------------------------------------- render
 
-def render(change: FileChange) -> Optional[bytes]:
-    """New bytes for a file change; None for copy-dir. Reads, never writes."""
+def render(change: FileChange, prior: Optional[list] = None, orig: Optional[Path] = None) -> Optional[bytes]:
+    """New bytes for a file change; None for copy-dir. Reads, never writes.
+    prior: the patches an earlier install/update merged into this file; they are taken out first (the
+    original's values come back from `orig`, the backup), so an update REPLACES the harness's keys and
+    list items instead of piling new ones next to stale ones."""
     p = Path(change.path)
+    prior = [x for x in (prior or []) if x != change.content]
     if change.kind == "replace":
         c = change.content
         return c.read_bytes() if isinstance(c, Path) else str(c).encode("utf-8")
     if change.kind == "merge-json":
-        return _dump_json(json_merge(_read_json(p), change.content))
+        cur = _read_json(p)
+        base = _read_json(orig) if orig is not None else {}
+        for old in reversed(prior):
+            cur = json_unmerge(cur, old, base)
+        return _dump_json(json_merge(cur, change.content))
     if change.kind == "merge-toml":
         text = p.read_text(encoding="utf-8") if p.exists() else ""
+        before = orig.read_text(encoding="utf-8") if orig is not None else ""
+        for old in reversed(prior):
+            text = toml_unmerge(text, old, before)
         return toml_merge(text, change.content).encode("utf-8")
     if change.kind == "copy-dir":
         if not Path(change.content).is_dir():
@@ -470,10 +530,13 @@ def apply(hh: Path, tool_changes: List[Tuple[str, List[FileChange]]], state: dic
         raise InstallError("no write roots given")
     check_roots([Path(ch.path) for _, changes in tool_changes for ch in changes], roots + [hh])
     state["roots"] = sorted({str(r) for r in roots} | set(state.get("roots", [])))
+    known = {e["path"]: e for e in state.get("entries", [])}
     rendered = []
     for tool, changes in tool_changes:
         for ch in changes:
-            rendered.append((tool, ch, render(ch)))
+            e = known.get(str(Path(ch.path)))
+            orig = hh / e["backup"] if e and e.get("backup") else None
+            rendered.append((tool, ch, render(ch, e.get("patches") if e else None, orig)))
     ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     backup = hh / "backup" / ts
     entries: Dict[str, dict] = {e["path"]: e for e in state.setdefault("entries", [])}
@@ -491,8 +554,8 @@ def apply(hh: Path, tool_changes: List[Tuple[str, List[FileChange]]], state: dic
             entries[str(p)] = e
         if tool not in e["tools"]:
             e["tools"].append(tool)
-        if ch.kind in ("merge-json", "merge-toml") and ch.content not in e["patches"]:
-            e["patches"].append(copy.deepcopy(ch.content))
+        if ch.kind in ("merge-json", "merge-toml"):
+            e["patches"] = [copy.deepcopy(ch.content)]   # render() took the earlier patches out
         p.parent.mkdir(parents=True, exist_ok=True)
         if ch.kind == "copy-dir":
             _remove_any(p)
@@ -538,12 +601,10 @@ def uninstall(hh: Path, log: Callable[[str], None] = print) -> List[str]:
                 p.unlink()
             log(f"  {p}: changed since install; took out only the harness keys")
         elif e["kind"] == "merge-toml":
-            names = [n for patch in e.get("patches", []) for n in patch]
-            rest, _ = toml_remove(p.read_text(encoding="utf-8"), names)
-            if orig is not None:
-                _, ours_before = toml_remove(orig.read_text(encoding="utf-8"), names)
-                if ours_before:
-                    rest = rest + ("" if rest.endswith("\n") or not rest else "\n") + ours_before
+            rest = p.read_text(encoding="utf-8")
+            before = orig.read_text(encoding="utf-8") if orig is not None else ""
+            for patch in reversed(e.get("patches", [])):
+                rest = toml_unmerge(rest, patch, before)
             if rest.strip() or orig is not None:
                 p.write_text(rest, encoding="utf-8")
             else:
@@ -612,8 +673,9 @@ def build_rules(content: Path, profile: dict, profile_dir: Optional[Path], hh: P
     desc = descriptor_name(profile, profile_dir)
     pointer = ""
     if desc:
-        pointer = (f"The descriptor for this machine is `{hh / 'profile' / desc}`. Before any work that touches "
-                   "shared storage, services or other users, read the part you need (`kb_search`, then `kb_get`).")
+        pointer = (f"This machine is described in `{desc}` (`{hh / 'profile' / desc}`); its section ids are in "
+                   "the Knowledge index. Read the section you need before touching shared storage, services or "
+                   "other users.")
     lines = text.split("\n")
     marks = [i for i, ln in enumerate(lines) if ln.strip() == DESCRIPTOR_MARK]
     if marks:
@@ -665,13 +727,21 @@ def copy_harness(hh: Path, source: Path, profile_dir: Optional[Path]) -> None:
         shutil.copytree(Path(profile_dir), hh / "profile", ignore=IGNORE)
 
 
+def extra_rules_text(profile: dict, profile_dir: Optional[Path]) -> str:
+    extra = _pget(profile, "extra_rules", "rules.extra_rules")
+    if not (extra and profile_dir):
+        return ""
+    f = Path(profile_dir) / os.path.expanduser(str(extra))
+    return f.read_text(encoding="utf-8").strip() if f.is_file() else ""
+
+
 def make_ctx(home: Path, hh: Path, content: Path, profile_dir: Optional[Path],
              project: Optional[Path] = None, extra_mcp: Optional[dict] = None) -> Ctx:
     profile = load_profile(profile_dir)
     return Ctx(home=Path(home), harness_home=hh, content=Path(content), profile=profile,
                rules=build_rules(content, profile, profile_dir, hh), mcp_cmd=mcp_cmd(hh),
                scope="project" if project else "user", project=Path(project) if project else None,
-               extra_mcp=dict(extra_mcp or {}))
+               extra_mcp=dict(extra_mcp or {}), extra_rules=extra_rules_text(profile, profile_dir))
 
 
 def plan_lines(adapter, changes: List[FileChange]) -> List[str]:

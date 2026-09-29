@@ -50,25 +50,30 @@ def _profile_dir(args, hh: Path, state: dict) -> Optional[Path]:
 
 
 def kb_index(hh: Path, profile: dict, profile_dir: Optional[Path]) -> str:
-    """The always-loaded knowledge index over the profile's kb_paths ('' if unavailable)."""
-    paths = I.kb_paths(profile, profile_dir)
-    if profile_dir:
-        paths.append(Path(profile_dir))  # the active profile: descriptor and rules are indexed too
+    """The always-loaded knowledge index ('' if unavailable). Its roots are exactly the ones the MCP
+    server searches (the profile folder's files as their own roots + the profile's kb_paths), so every
+    id printed here resolves with kb_get. The profile may name the pages whose section ids are listed
+    (`index_pages`, globs); the extra-rules file is left out (it is in the rules already)."""
+    from .mcp import kb as kbmod
+    paths = (kbmod.profile_folder_roots(Path(profile_dir)) if profile_dir else []) + I.kb_paths(profile, profile_dir)
     paths = [p for p in paths if p.exists()]
     if not paths:
         return ""
+    detail = profile.get("index_pages")
+    extra = I._pget(profile, "extra_rules", "rules.extra_rules")
     try:
-        from .mcp import kb as kbmod
         k = kbmod.KB(home=hh, paths=paths)
         try:
-            text = k.build_index(max_bytes=8000)
+            text = k.build_index(max_bytes=INDEX_CAP, detail=list(detail) if detail else None,
+                                 exclude=[Path(str(extra)).name] if extra else [])
         finally:
             getattr(k, "close", lambda: None)()
     except Exception:  # kb absent or broken: the rules still install
         return ""
-    return "## Knowledge index (fetch a section with kb_get <id>)\n\n" + text.strip() + "\n" if text.strip() else ""
+    return "## Knowledge index\n\n" + text.strip() + "\n" if text.strip() else ""
 
 
+INDEX_CAP = 4000
 DIGEST_CAP = 2048
 
 
@@ -477,14 +482,18 @@ def cmd_sync(args) -> int:
 
 # ---------------------------------------------------------------- Claude Code Stop hook
 
-STOP_REASON = ("Before you finish: run this project's checks (tests, linters, type checks) on what you "
-               "changed and report the result. If the project has none, say so. Then call session_note "
-               "with a one-line summary, and state_save if work is unfinished.")
+STOP_REASON = ("Files changed: before you finish, run this project's checks (tests, linters, type checks) "
+               "on what you changed and report the result, or say why not. Then session_note in one line, and "
+               "state_save if the work is unfinished.")
+# D2 (run_checks on): the gate is the recorded result, not a reminder. Blocks once per user turn.
+GATE_REASON = ("Files changed since the last passing run_checks ({why}): call run_checks and report its result, "
+               "or say why this project cannot be checked. Then session_note in one line.")
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
 
 def stop_hook(stdin=None) -> int:
-    """Ask for the checks once per user turn, and only when files were edited in that turn."""
+    """Once per user turn, and only when files were edited in that turn: with run_checks (D2), block while
+    no passing run_checks covers the current files; without it, ask for the checks. Never loops."""
     try:
         data = json.loads((stdin or sys.stdin).read() or "{}")
         if data.get("stop_hook_active"):
@@ -506,13 +515,21 @@ def stop_hook(stdin=None) -> int:
                                   for c in content if isinstance(c, dict))
         if not edited:
             return 0
+        reason = STOP_REASON
+        from .mcp import checks
+        if not checks.disabled("run_checks"):
+            from .mcp.state import project_root
+            stale, why = checks.unchecked_changes(project_root(data.get("cwd") or None))
+            if not stale:
+                return 0
+            reason = GATE_REASON.format(why=why)
         hh = I.harness_home(Path.home())
         marker = hh / "state" / f"stop-{data.get('session_id', 'x')}"
         if marker.is_file() and marker.read_text() == str(last_user):
             return 0
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(str(last_user))
-        print(json.dumps({"decision": "block", "reason": STOP_REASON}))
+        print(json.dumps({"decision": "block", "reason": reason}))
     except Exception:
         pass  # a hook must never break the tool
     return 0

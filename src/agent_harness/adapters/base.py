@@ -21,6 +21,7 @@ class Ctx:
     scope: str = "user"           # "user" (default) or "project"
     project: Optional[Path] = None
     extra_mcp: dict = field(default_factory=dict)  # name -> command list, from `harness warmup`
+    extra_rules: str = ""         # the profile's extra-rules text, as it appears inside `rules`
 
 
 @dataclass

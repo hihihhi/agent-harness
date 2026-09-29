@@ -214,7 +214,8 @@ def snippet(text: str, query: str, limit: int = SNIPPET_CHARS) -> str:
 # ---------------------------------------------------------------- splitting
 
 def slugify(title: str) -> str:
-    s = title.strip().lower()
+    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", title)   # a Markdown link counts by its text only
+    s = s.strip().lower()
     s = re.sub(r"[`*_\[\]()<>{}!?.,:;'\"/\\|@#$%^&+=~]", "", s)
     s = re.sub(r"\s+", "-", s).strip("-")
     return s or "section"
@@ -321,7 +322,10 @@ def _profile_kb_paths(hh: Path) -> List[Path]:
 def _profile_folder(hh: Path) -> List[Path]:
     """The active profile folder (SERVER.md, rules). Its top-level files are roots of their own, so a
     descriptor gets the id `SERVER.md#...` exactly as in the install-time index; subfolders are dir roots."""
-    pdir = hh / "profile"
+    return profile_folder_roots(hh / "profile")
+
+
+def profile_folder_roots(pdir: Path) -> List[Path]:
     if not _ok(Path.is_dir, pdir):
         return []
     try:
@@ -332,14 +336,36 @@ def _profile_folder(hh: Path) -> List[Path]:
                   if not p.name.startswith(".") and (_ok(Path.is_dir, p) or p.suffix.lower() in TEXT_SUFFIXES))
 
 
+def _project_root(start: Path) -> Optional[Path]:
+    """The git root at or above `start`, or None. $HOME itself (a dotfiles repo, or no repo at all) is
+    never a project: its docs/ are the account's private notes, not this session's project."""
+    try:
+        start = Path(start).expanduser().resolve()
+        home = Path.home().resolve()
+    except (OSError, RuntimeError):
+        return None
+    for d in (start,) + tuple(start.parents):
+        if _ok(lambda x: (x / ".git").exists(), d):
+            return None if d == home else d
+    return None
+
+
+def profile_roots(hh: Path) -> List[Path]:
+    """The profile's own files and its kb_paths: the roots the install-time index and the server share."""
+    return _profile_folder(hh) + _profile_kb_paths(hh)
+
+
 def default_kb_paths(hh: Path, project: Optional[Path] = None) -> List[Path]:
+    """The live roots of a session: the profile's, plus the current project's docs/README/AGENTS.md when
+    the session runs inside a git project other than $HOME. Nothing from an unrelated cwd is indexed.
+    The harness's own content (rules, skills) is not: every tool already loads it natively."""
     env = os.environ.get("HARNESS_KB_PATHS")
     if env:
         return [Path(os.path.expanduser(p)) for p in env.split(os.pathsep) if p]
-    project = project or Path.cwd()
-    paths = _profile_folder(hh) + _profile_kb_paths(hh)
-    paths.append(hh / "content")
-    paths += [project / "docs", project / "README.md", project / "AGENTS.md"]
+    paths = profile_roots(hh)
+    root = _project_root(project or Path.cwd())
+    if root is not None:
+        paths += [root / "docs", root / "README.md", root / "AGENTS.md"]
     return paths
 
 
@@ -538,6 +564,8 @@ class KB:
         r = self.con.execute(
             "SELECT s.* FROM kb_sections s JOIN kb_live l ON l.path=s.path WHERE s.sid=? LIMIT 1",
             (sid,)).fetchone()
+        if r is None and sid.startswith("profile/"):  # v0.1.0 printed profile ids with this prefix
+            return self._row(sid[len("profile/"):])
         if r is None and sid.startswith("#"):  # bare slug from kb_index: accept it when unambiguous
             rows = self.con.execute(
                 "SELECT s.* FROM kb_sections s JOIN kb_live l ON l.path=s.path WHERE substr(s.sid, -?)=? LIMIT 2",
@@ -545,11 +573,37 @@ class KB:
             r = rows[0] if len(rows) == 1 else None
         return r
 
+    def _page_rows(self, page: str) -> List[sqlite3.Row]:
+        rows = self.con.execute(
+            "SELECT s.sid, s.title, s.level, s.bytes, s.ord, s.path FROM kb_sections s JOIN kb_live l "
+            "ON l.path=s.path WHERE s.rel=? ORDER BY s.ord", (page,)).fetchall()
+        if not rows and page.startswith("profile/"):
+            return self._page_rows(page[len("profile/"):])
+        return rows
+
+    @staticmethod
+    def _section_list(page: str, rows: List[sqlite3.Row]) -> str:
+        lines = ["Sections of %s (kb_get <id> fetches one):" % page]
+        for r in rows:
+            if re.search(r"-p\d+$", r["sid"]) or not r["level"]:
+                continue
+            lines.append("%s%s  %s  (%d B)" % ("  " * max(0, (r["level"] or 1) - 1), r["sid"], r["title"], r["bytes"]))
+        return "\n".join(lines) + "\n"
+
     def get(self, id: str, max_bytes: int = 8000) -> dict:
+        """One section by id. A page name alone (`docs/x.md`), or the first section of a page, also
+        returns the page's section list, so a page-level id leads straight to the section wanted."""
         self.refresh()
+        page, _, slug = id.partition("#")
         r = self._row(id)
+        if r is None and (not slug or slug == "top"):
+            rows = self._page_rows(page)
+            if rows:
+                listing = self._section_list(rows[0]["sid"].split("#")[0], rows)
+                return {"id": rows[0]["sid"].split("#")[0], "title": "sections", "path": rows[0]["sid"].split("#")[0],
+                        "bytes": len(listing.encode("utf-8")), "truncated": False, "text": listing}
         if r is None:
-            raise KeyError("no section %r; call kb_search to find section ids" % id)
+            raise KeyError("no section %r; kb_get <page> lists a page's section ids, kb_search finds them" % id)
         max_bytes = max(200, int(max_bytes))
         text, truncated = r["body"], False
         if r["bytes"] > max_bytes:
@@ -557,6 +611,10 @@ class KB:
             text += "\n[truncated: showed %d of %d bytes; call kb_get with a larger max_bytes if needed]\n" % (
                 len(text.encode("utf-8")), r["bytes"])
             truncated = True
+        if r["ord"] == 0:
+            rows = self._page_rows(r["rel"])
+            if len(rows) > 1:
+                text = text.rstrip("\n") + "\n\n" + self._section_list(r["rel"], rows[1:])
         out = {"id": r["sid"], "title": r["title"], "path": r["rel"], "bytes": r["bytes"],
                "truncated": truncated, "text": text}
         nxt = self.con.execute("SELECT sid FROM kb_sections WHERE path=? AND ord=?",
@@ -598,50 +656,72 @@ class KB:
             out.append(f)
         return out
 
-    def build_index(self, max_bytes: int = 8000) -> str:
-        """Compact page-level index, grouped by page: a `## <page>` line, then one `#slug — title` line
-        per section (the title is left out when the slug already says it). id = page + #slug.
+    def build_index(self, max_bytes: int = 8000, detail: Optional[Sequence[str]] = None,
+                    exclude: Sequence[str] = ()) -> str:
+        """Compact index: one line per detailed page, `<page>: #slug #slug ...` (its level-1/2 sections,
+        the page's own title heading left out), then one line naming the other pages. id = page + #slug,
+        exactly as kb_get resolves it.
 
-        Always fits max_bytes: deepest headings are dropped first (###, then ##, then #), then
-        whole pages from the end, with a one-line note saying what was left out.
+        detail: glob patterns of the pages whose section ids are listed (None = every page, as many as
+        fit). exclude: pages left out (e.g. the rules file already in the rules). A page whose text is
+        identical to one already listed (a descriptor copied into the wiki) is listed once. Profile files
+        come first. Always fits max_bytes: detailed pages lose their ids from the end, then the other-
+        pages line is cut, with a note.
         """
+        import fnmatch
+        import hashlib
         self.refresh()
         rows = self.con.execute(
-            "SELECT s.sid, s.rel, s.title, s.level FROM kb_sections s JOIN kb_live l ON l.path=s.path "
-            "WHERE s.sid NOT GLOB '*-p[0-9]*' OR s.title NOT GLOB '* (part [0-9]*)' "
-            "ORDER BY s.rel, s.ord").fetchall()
+            "SELECT s.sid, s.rel, s.title, s.level, s.ord, s.body FROM kb_sections s JOIN kb_live l "
+            "ON l.path=s.path ORDER BY s.rel, s.ord").fetchall()
         pages: Dict[str, List[sqlite3.Row]] = {}
         for r in rows:
             pages.setdefault(r["rel"], []).append(r)
-        head = ("Knowledge index. Section id = page + #slug (e.g. %s); kb_get <id> fetches one section, "
-                "kb_search <words> if nothing here fits.\n" % (rows[0]["sid"] if rows else "docs/x.md#setup"))
+        auth = self._authoritative()
+        order = sorted(pages, key=lambda rel: (rel not in auth, rel))
+        seen, keep = set(), []
+        for rel in order:
+            h = hashlib.sha1("".join(r["body"] for r in pages[rel]).encode("utf-8")).hexdigest()
+            if rel in exclude or h in seen:
+                continue
+            seen.add(h)
+            keep.append(rel)
 
-        def line(r: sqlite3.Row) -> str:
-            slug = r["sid"][len(r["rel"]):]
-            same = slug[1:] == slugify(r["title"]) or r["level"] == 0
-            return "%s\n" % slug if same else "%s — %s\n" % (slug, r["title"])
+        def slugs(rel: str) -> List[str]:
+            out, title_seen = [], False
+            for r in pages[rel]:
+                lvl = r["level"] or 0
+                if lvl == 0 or lvl > 2 or re.search(r"-p\d+$", r["sid"]):
+                    continue
+                if lvl == 1 and not title_seen:     # the page's own title: the page name says it
+                    title_seen = True
+                    continue
+                out.append(r["sid"][len(rel):])
+            return out
 
-        def render(max_level: int, n_pages: int) -> str:
-            out = [head]
-            for rel in list(pages)[:n_pages]:
-                out.append("## %s\n" % rel)
-                out += [line(r) for r in pages[rel] if (r["level"] or 0) <= max_level]
-            dropped = [] if max_level >= 3 else [
-                "headings deeper than level %d" % max_level if max_level else "section headings (kb_toc <page>)"]
-            if n_pages < len(pages):
-                dropped.append("%d more pages (kb_toc lists them)" % (len(pages) - n_pages))
-            if dropped:
-                out.append("[omitted: %s]\n" % "; ".join(dropped))
+        wanted = [rel for rel in keep if detail is None or any(fnmatch.fnmatch(rel, g) for g in detail)]
+        wanted = [rel for rel in wanted if slugs(rel)]
+        head = ("Section id = <page>#<slug>: `kb_get <id>` fetches one section, `kb_get <page>` lists a "
+                "page's sections, `kb_search <words>` only when nothing here fits.\n")
+
+        def render(n_detail: int, n_other: int) -> str:
+            det = wanted[:n_detail]
+            out = [head] + ["%s: %s\n" % (rel, " ".join(slugs(rel))) for rel in det]
+            other = [rel for rel in keep if rel not in det]
+            if other:
+                shown = other[:n_other]
+                out.append("Other pages: %s%s\n" % (" ".join(shown),
+                           " (+%d more: kb_toc)" % (len(other) - len(shown)) if len(shown) < len(other) else ""))
             return "".join(out)
 
-        n = len(pages)
-        for lvl in (3, 2, 1, 0):
-            text = render(lvl, n)
+        n_other = len(keep)
+        for n in range(len(wanted), -1, -1):
+            text = render(n, n_other)
             if len(text.encode("utf-8")) <= max_bytes:
                 return text
-        while n > 0:
-            n -= 1
-            text = render(0, n)
+        while n_other > 0:
+            n_other -= 1
+            text = render(0, n_other)
             if len(text.encode("utf-8")) <= max_bytes:
                 return text
         return _utf8_cut(head, max_bytes)
@@ -651,10 +731,11 @@ class KB:
 
 
 def build_index(max_bytes: int = 8000, home: Optional[os.PathLike] = None,
-                paths: Optional[Sequence[os.PathLike]] = None) -> str:
+                paths: Optional[Sequence[os.PathLike]] = None, detail: Optional[Sequence[str]] = None,
+                exclude: Sequence[str] = ()) -> str:
     """Module-level convenience: the compact section index for the default (or given) KB paths."""
     kb = KB(home=home, paths=paths)
     try:
-        return kb.build_index(max_bytes)
+        return kb.build_index(max_bytes, detail, exclude)
     finally:
         kb.close()
