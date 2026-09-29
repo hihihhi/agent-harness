@@ -136,7 +136,7 @@ TOOLS = [
 
 
 def tool_list() -> list:
-    """The advertised tools; HARNESS_DISABLE=run_checks hides that one (A/B arm switch)."""
+    """The advertised tools; run_checks only with HARNESS_ENABLE=run_checks (off by default, see checks.py)."""
     return [t for t in TOOLS if not checks.disabled(t["name"])]
 
 

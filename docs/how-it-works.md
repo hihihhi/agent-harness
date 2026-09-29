@@ -96,16 +96,13 @@ The rules ask for good behaviour; the harness enforces a floor where the tool al
   unknown hosts; force-pushes to `main`/`master`; reading SSH keys or credential files; `sudo`.
   It uses only the Python standard library, adds about 40 ms per command, and is also a plain checker:
   `guard.py --check "<command>"`. It is a seat belt, not a sandbox.
-- **`run_checks`** (MCP tool, every tool): finds the project's own tests (pytest, npm, make,
-  unittest), runs them and returns only the failures and the summary, at most 2 KB. It records the
-  result and a fingerprint of the project's files.
-- **Finish gate** (Claude Code): when the agent stops after editing files and no passing
-  `run_checks` covers the files as they are now, it is sent back once to run the checks or say why
-  not. It never loops. (Without `run_checks`: a one-time reminder to run the checks.)
-- **Check guard** (`content/hooks/check_guard.py`, Claude Code): an edit to an existing test or gate
-  that removes an assertion, adds a skip/xfail/only, or changes a tolerance is put to you first.
-  New test files and edits that keep every assertion pass untouched.
-- For A/B evaluations, `HARNESS_DISABLE=run_checks,check_guard` switches either off.
+- **Finish check** (Claude Code): when the agent stops after editing project files, it is reminded once
+  to run the project's checks and report the result. Writes to its own memory files do not count.
+- **Off by default, for evaluation**: the `run_checks` MCP tool (finds the project's tests, returns only
+  the failures, records the result), a finish gate on that record, and a check guard that asks before an
+  existing test loses an assertion or gains a skip. On 36 coding runs (v0.1.1 eval) no arm ever claimed a
+  false "done" or weakened a test, so neither could show the gain the harness's keep rule asks for.
+  `HARNESS_ENABLE=run_checks,check_guard` turns them on (the check guard is installed, inert).
 - **Memory recall** (Claude Code): relevant memories are attached to each prompt, within a strict
   time limit, so the agent does not need to search for them.
 

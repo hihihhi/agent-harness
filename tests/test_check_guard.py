@@ -31,7 +31,7 @@ class Guard(unittest.TestCase):
 
     def ask(self, tool, inp, env=None):
         data = {"tool_name": tool, "tool_input": inp, "cwd": str(self.tmp)}
-        with mock.patch.dict(os.environ, env or {}, clear=False):
+        with mock.patch.dict(os.environ, dict({"HARNESS_ENABLE": "check_guard"}, **(env or {})), clear=False):
             return cg.decide(data)
 
     def test_removed_assertion_asks(self):
@@ -69,9 +69,12 @@ class Guard(unittest.TestCase):
     def test_arm_switch_and_cli_never_fails(self):
         self.assertIsNone(self.ask("Edit", {"file_path": str(self.t), "old_string": "    assert f(2) == 3\n",
                                             "new_string": ""}, env={"HARNESS_DISABLE": "run_checks,check_guard"}))
+        self.assertIsNone(self.ask("Edit", {"file_path": str(self.t), "old_string": "    assert f(2) == 3\n",
+                                            "new_string": ""}, env={"HARNESS_ENABLE": ""}))   # off by default
         for stdin in ("not json", "{}", json.dumps({"tool_name": "Edit", "tool_input": {"file_path": str(self.t),
                       "old_string": "    assert f(2) == 3\n", "new_string": ""}, "cwd": str(self.tmp)})):
-            p = subprocess.run([sys.executable, str(HOOK)], input=stdin, capture_output=True, text=True)
+            p = subprocess.run([sys.executable, str(HOOK)], input=stdin, capture_output=True, text=True,
+                               env=dict(os.environ, HARNESS_ENABLE="check_guard"))
             self.assertEqual(p.returncode, 0)
         self.assertEqual(json.loads(p.stdout)["hookSpecificOutput"]["permissionDecision"], "ask")
 

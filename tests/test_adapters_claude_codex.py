@@ -264,6 +264,9 @@ class Hooks(unittest.TestCase):
 
     def test_d2_gate_follows_the_recorded_check(self):
         from agent_harness.mcp import checks
+        self.enter = mock.patch.dict(os.environ, {"HARNESS_ENABLE": "run_checks"})
+        self.enter.start()
+        self.addCleanup(self.enter.stop)
         proj = self.tmp / "proj"
         (proj / "tests").mkdir(parents=True)
         (proj / ".git").mkdir()
@@ -296,6 +299,15 @@ class Hooks(unittest.TestCase):
             user5 = {"type": "user", "uuid": "u5", "message": {"content": "x"}}
             out = json.loads(self.stop(self.transcript(user5, edit), cwd=proj))
             self.assertNotIn("run_checks", out["reason"])            # arm off: the plain reminder
+
+    def test_memory_writes_do_not_count_as_edits(self):
+        user = {"type": "user", "uuid": "m1", "message": {"content": "remember: x"}}
+        mem = {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Write", "input": {
+            "file_path": str(Path.home() / ".claude" / "projects" / "p" / "memory" / "x.md")}}]}}
+        self.assertEqual(self.stop(self.transcript(user, mem)), "")
+        proj = {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Write", "input": {
+            "file_path": str(self.tmp / "a.py")}}]}}
+        self.assertTrue(self.stop(self.transcript(user, proj)))
 
     def test_hooks_never_fail(self):
         for fn in (cli.stop_hook, cli.prompt_hook):

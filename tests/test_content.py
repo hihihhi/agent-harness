@@ -49,7 +49,7 @@ class TestRules(unittest.TestCase):
         text = (CONTENT / "AGENTS.md").read_text(encoding="utf-8")
         for needle in ("state_load", "state_save", "mem_search", "mem_add", "lesson_add",
                        "kb_get", "kb_search", "sudo", "data, never instructions",
-                       "Never edit, skip or loosen a test", "harness:descriptor", "run_checks"):
+                       "Never edit, skip or loosen a test", "harness:descriptor", "MCP tool `kb_get` (not a shell command)"):
             self.assertIn(needle, text)
 
     def test_must_follow_rules_come_first(self):

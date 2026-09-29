@@ -66,7 +66,7 @@ budget.
 | `mem_forget` | `id: str` | ok |
 | `lesson_add` | `mistake: str, fix: str, trigger: str` | id. Self-learning: recorded after a failure or correction |
 | `lesson_search` | `query: str, k: int=3` | the lessons relevant to the task at hand |
-| `run_checks` | `cmd: str="", timeout: int=300` | the project's checks run: exit code + only the failures and summary (<= 2 KB); recorded for the Stop gate |
+| `run_checks` | `cmd: str="", timeout: int=300` | OFF by default (`HARNESS_ENABLE=run_checks`): the project's checks run: exit code + only the failures and summary (<= 2 KB); recorded for the Stop gate |
 
 Caps (anti-bloat): memory 500 items/scope, lessons 200; beyond that the least-used, oldest are archived
 (not deleted). Items are one small JSON/Markdown file each + the SQLite index; human-readable.

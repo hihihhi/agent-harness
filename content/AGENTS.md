@@ -22,9 +22,9 @@ go back to where the evidence points. Same failure twice: change the approach (`
 
 ## Knowledge
 
-The Knowledge index below lists section ids: `kb_get <id>` fetches one section, `kb_get <page>`
-lists a page's sections. Use `kb_search` only when nothing there fits. Never read a whole
-document when a section will do.
+The Knowledge index below lists section ids. The harness MCP tool `kb_get` (not a shell command)
+fetches one section by id; given a page name it lists that page's sections. Use the `kb_search`
+tool only when nothing there fits. Never read a whole document when a section will do.
 
 ## Memory
 
@@ -34,10 +34,6 @@ document when a section will do.
   or personal data. After a check failed then passed, or a correction from the user: `lesson_add`.
 - Unfinished multi-step work: `state_save` (goal, stage, decisions, next); after a compaction,
   `state_load`. One-shot questions need neither.
-
-## Checks
-
-When a `run_checks` tool is available, run it after your last edit; it returns only the failures.
 
 ## Web
 
