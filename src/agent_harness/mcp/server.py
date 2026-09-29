@@ -85,8 +85,8 @@ TOOLS = [
                        min_score={"type": "number"})},
     {"name": "state_save",
      "description": "Save this project's working state so nothing is lost when context compacts (<=4096 bytes, "
-                    "replaces the last save); use sections: Goal / Decisions / Done / Next / Open questions / "
-                    "Key files.",
+                    "replaces the last save); use sections: Goal / Stage (analyse|research|plan|execute|evaluate) / "
+                    "Decisions / Done / Next / Open questions / Key files.",
      "inputSchema": _s(text={"type": "string", "_req": True}, project={"type": "string", "default": ""})},
     {"name": "state_load",
      "description": "Read this project's saved working state (after compaction or at session start) before "

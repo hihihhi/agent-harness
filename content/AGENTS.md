@@ -24,8 +24,8 @@ except for **Safety**, which always applies.
 
 ## Task state
 
-- At each milestone, call `state_save` with the working state, at most 4 KB: goal, decisions
-  and why, done (with evidence), next, open questions, key files.
+- At each milestone, call `state_save` with the working state, at most 4 KB: goal, stage of
+  the work loop, decisions and why, done (with evidence), next, open questions, key files.
 - State is for work in progress only. Long-lived facts go to `mem_add`; mistakes go to
   `lesson_add`.
 
@@ -35,6 +35,15 @@ except for **Safety**, which always applies.
 - If the work is unfinished, call `state_save` so the next session (in any tool) resumes it.
 - Call `mem_add` for any stable preference or fact you learned. Use `pin=true` ONLY when the
   user explicitly asks for something to always be known.
+
+## The work loop (default for anything beyond a one-line change)
+
+Analyse (or, for science, state a **hypothesis**) -> **research** (what exists, what is known,
+only the relevant sources) -> **summarise and plan** (the "done" check, first) -> **execute /
+experiment** -> **test and evaluate** against that check -> loop: jump back to whichever stage
+the evidence points to (a failed test -> execute; a wrong assumption -> analyse; missing facts
+-> research). Record the current stage in `state_save`. Skip stages that add nothing to a small
+task. Details: the `work-loop` skill.
 
 ## Plan small, verify
 
