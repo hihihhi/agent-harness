@@ -686,3 +686,22 @@ class UnreadablePaths(unittest.TestCase):
                 self.assertTrue(hits, "the readable descriptor must still be found")
             finally:
                 os.chmod(locked, stat.S_IRWXU)
+
+
+class DescriptorRanksFirst(unittest.TestCase):
+    """Profile files (the machine descriptor) are authoritative: on an equal or close match they rank
+    above a wiki page. The relevance threshold still uses the unboosted score."""
+
+    def test_descriptor_wins_a_close_match(self):
+        import tempfile
+        from pathlib import Path
+        from agent_harness.mcp import kb
+        body = "# Machine\nThe research server has 4 GPUs with 96 GB of GPU memory per card.\n"
+        with tempfile.TemporaryDirectory() as t:
+            hh = Path(t) / "hh"; (hh / "profile").mkdir(parents=True)
+            (hh / "profile" / "SERVER.md").write_text(body)
+            wiki = Path(t) / "wiki"; wiki.mkdir()
+            (wiki / "aaa-hardware.md").write_text(body)
+            k = kb.KB(home=hh, paths=[wiki, hh / "profile" / "SERVER.md"])
+            ids = [h["id"] for h in k.search("GPU memory per card", 3)]
+            self.assertEqual(ids[0], "SERVER.md#machine", ids)
