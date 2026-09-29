@@ -223,6 +223,11 @@ def _reapply(hh: Path, home: Path, state: dict) -> None:
 
 def cmd_uninstall(args) -> int:
     home, hh = _paths(args)
+    for f in ("notices.json", ".notices-mcp-day"):  # pending notices go with the setup (mcp/server.py)
+        try:
+            (hh / f).unlink()
+        except OSError:
+            pass
     if not I.load_state(hh):
         _out("Nothing to uninstall.")
         return 0
