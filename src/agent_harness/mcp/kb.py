@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 TEXT_SUFFIXES = {".md", ".markdown", ".mdx", ".txt", ".rst"}
+DESCRIPTOR_BOOST = 1.5   # profile files outrank equal wiki matches (see search())
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".tox", "archive"}
 
 def _ok(pred, p) -> bool:
@@ -513,11 +514,25 @@ class KB:
                     rows.append(r)
             n, avgdl, df = len(bm.keys), bm.avg, {t: bm.df(t) for t in qt}
         scored = [(relevance(qt, _doc_tokens(r["title"], r["body"]), n, avgdl, df), r) for r in rows]
-        scored = sorted((x for x in scored if x[0] >= min_score), key=lambda x: -x[0])[:k]
+        # The profile's own files (the machine descriptor, the rules) are the authoritative source for
+        # questions about this environment, so among relevant hits they rank first: a wiki page that just
+        # repeats "GPU" should not push the descriptor's Machine section out of the top few. The threshold
+        # still applies to the unboosted score, so a weak descriptor match is not let through.
+        auth = self._authoritative()
+        scored = sorted((x for x in scored if x[0] >= min_score),
+                        key=lambda x: -(x[0] * (DESCRIPTOR_BOOST if x[1]["rel"] in auth else 1.0)))[:k]
         return [{"id": r["sid"], "title": r["title"], "path": r["rel"],
                  "snippet": snippet(r["body"].split("\n", 1)[-1] if r["body"].startswith("#") else r["body"],
                                     query),
                  "bytes": r["bytes"], "score": round(sc, 2)} for sc, r in scored]
+
+    def _authoritative(self) -> set:
+        """Names of the top-level files in the active profile folder (their ids start with the name)."""
+        pdir = self.home / "profile"
+        try:
+            return {p.name for p in pdir.iterdir() if _ok(Path.is_file, p) and p.suffix.lower() in TEXT_SUFFIXES}
+        except OSError:
+            return set()
 
     def _row(self, sid: str) -> Optional[sqlite3.Row]:
         r = self.con.execute(
