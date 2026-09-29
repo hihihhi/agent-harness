@@ -21,7 +21,7 @@ TEST = ("import sys, unittest\nsys.path.insert(0, '.')\nimport m\n\n"
 class Checks(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        self.env = mock.patch.dict(os.environ, {"HARNESS_HOME": str(self.tmp / "hh")})
+        self.env = mock.patch.dict(os.environ, {"HARNESS_HOME": str(self.tmp / "hh"), "HARNESS_ENABLE": "run_checks"})
         self.env.start()
         self.proj = self.tmp / "proj"
         (self.proj / "tests").mkdir(parents=True)
@@ -81,6 +81,8 @@ class Checks(unittest.TestCase):
 
     def test_arm_switch_hides_the_tool(self):
         self.assertIn("run_checks", [t["name"] for t in tool_list()])
+        with mock.patch.dict(os.environ, {"HARNESS_ENABLE": ""}):
+            self.assertNotIn("run_checks", [t["name"] for t in tool_list()])        # off by default
         with mock.patch.dict(os.environ, {"HARNESS_DISABLE": "check_guard,run_checks"}):
             self.assertNotIn("run_checks", [t["name"] for t in tool_list()])
             r = Server(home=self.tmp / "hh").handle(

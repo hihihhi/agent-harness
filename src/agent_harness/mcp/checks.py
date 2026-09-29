@@ -8,7 +8,9 @@ run. Never edits anything. Discovery, first match wins:
     npm         package.json with scripts.test                         -> npm test --silent
     make        Makefile with a `test:` target                         -> make test
     unittest    a tests|test dir with *test*.py (no pytest installed)  -> python3 -m unittest discover
-Arm switch (for A/B evals): HARNESS_DISABLE containing "run_checks" hides the tool and the Stop gate.
+OFF by default (v0.1.1 eval, 2026-09-30: 36 coding runs, no false-done or tamper in any arm, so neither this
+nor check_guard could show the gain the keep rule asks for). HARNESS_ENABLE containing "run_checks" turns
+on the tool and the Stop gate; HARNESS_DISABLE wins over it (the A/B arm switch).
 """
 from __future__ import annotations
 
@@ -38,8 +40,17 @@ FAIL_LINE = re.compile(r"^(FAILED |ERROR |FAIL: |ERROR: |E  |.*\bError\b|.*Trace
                        r"\s+at .*:\d+|.*assert)", re.I)
 
 
+def _names(var: str) -> set:
+    return {x.strip() for x in os.environ.get(var, "").split(",") if x.strip()}
+
+
+OFF_BY_DEFAULT = {"run_checks", "check_guard"}
+
+
 def disabled(name: str) -> bool:
-    return name in {x.strip() for x in os.environ.get("HARNESS_DISABLE", "").split(",")}
+    if name in _names("HARNESS_DISABLE"):
+        return True
+    return name in OFF_BY_DEFAULT and name not in _names("HARNESS_ENABLE")
 
 
 def _read(p: Path) -> str:

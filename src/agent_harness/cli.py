@@ -491,6 +491,24 @@ GATE_REASON = ("Files changed since the last passing run_checks ({why}): call ru
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
 
+def _own_memory(path: str) -> bool:
+    """A write to the assistant's own memory (~/.claude, the harness home) is not a project edit: the eval's
+    'remember ...' sessions were sent back to run checks after saving a memory file."""
+    if not path:
+        return False
+    try:
+        p = Path(os.path.expanduser(path)).resolve()
+    except (OSError, RuntimeError):
+        return False
+    for root in (Path.home() / ".claude", I.harness_home(Path.home())):
+        try:
+            p.relative_to(root.resolve())
+            return True
+        except (ValueError, OSError):
+            continue
+    return False
+
+
 def stop_hook(stdin=None) -> int:
     """Once per user turn, and only when files were edited in that turn: with run_checks (D2), block while
     no passing run_checks covers the current files; without it, ask for the checks. Never loops."""
@@ -512,6 +530,7 @@ def stop_hook(stdin=None) -> int:
                         last_user, edited = e.get("uuid") or line[:64], False
                 elif e.get("type") == "assistant" and isinstance(content, list):
                     edited |= any(c.get("type") == "tool_use" and c.get("name") in EDIT_TOOLS
+                                  and not _own_memory(str((c.get("input") or {}).get("file_path") or ""))
                                   for c in content if isinstance(c, dict))
         if not edited:
             return 0

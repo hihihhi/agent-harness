@@ -701,8 +701,8 @@ class KB:
 
         wanted = [rel for rel in keep if detail is None or any(fnmatch.fnmatch(rel, g) for g in detail)]
         wanted = [rel for rel in wanted if slugs(rel)]
-        head = ("Section id = <page>#<slug>: `kb_get <id>` fetches one section, `kb_get <page>` lists a "
-                "page's sections, `kb_search <words>` only when nothing here fits.\n")
+        head = ("Section id = <page>#<slug>. The MCP tool kb_get(id) fetches one section; kb_get(<page>) lists a "
+                "page's sections; kb_search(query) only when nothing here fits.\n")
 
         def render(n_detail: int, n_other: int) -> str:
             det = wanted[:n_detail]

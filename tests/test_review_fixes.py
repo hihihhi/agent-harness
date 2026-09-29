@@ -91,6 +91,12 @@ class ProfileTables(Tmp):
 
 
 class GuardPaths(Tmp):
+    def setUp(self):
+        super().setUp()
+        e = mock.patch.dict(os.environ, {"HARNESS_ENABLE": "check_guard"})
+        e.start()
+        self.addCleanup(e.stop)
+
     def test_folders_named_test_above_the_project_do_not_count(self):
         proj = self.tmp / "test" / "proj"
         (proj / "src").mkdir(parents=True)

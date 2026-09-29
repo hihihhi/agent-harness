@@ -7,7 +7,8 @@ non-interactive run nobody can say yes, so the edit is refused). New test files,
 assertion, pass untouched. Reads the hook JSON on stdin; prints nothing when it has no objection; never
 fails the tool (any error = no objection).
 
-Arm switch (A/B evals): HARNESS_DISABLE containing "check_guard" turns it off.
+OFF by default (v0.1.1 eval: no tampering in any of 36 coding runs, so no measurable gain): it acts only
+with HARNESS_ENABLE containing "check_guard"; HARNESS_DISABLE wins (the A/B arm switch).
 """
 import json
 import os
@@ -93,7 +94,8 @@ def relative(path: Path, cwd: str) -> str:
 
 
 def decide(data: dict):
-    if "check_guard" in {x.strip() for x in os.environ.get("HARNESS_DISABLE", "").split(",")}:
+    names = lambda v: {x.strip() for x in os.environ.get(v, "").split(",")}  # noqa: E731
+    if "check_guard" in names("HARNESS_DISABLE") or "check_guard" not in names("HARNESS_ENABLE"):
         return None
     tool = data.get("tool_name", "")
     inp = data.get("tool_input") or {}
