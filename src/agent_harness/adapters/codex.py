@@ -33,7 +33,11 @@ class CodexAdapter(Adapter):
         # in the current MCP docs (auto|prompt|writes|approve); 0.145 rejects "auto", and then every harness
         # call came back "user cancelled MCP tool call" (eval 2026-09-30).
         tables["mcp_servers.harness"]["default_tools_approval_mode"] = "approve"
-        tables.update(profile_tables(ctx.profile))
+        for name, body in profile_tables(ctx.profile).items():
+            if name[1:] in tables:                 # e.g. [codex.config.mcp_servers.harness]: extra keys for ours
+                tables[name[1:]].update(body)
+            else:
+                tables[name] = body
         note = "agent rules (replaces the file)"
         if not project and (codex / "AGENTS.override.md").is_file():
             note += "; NOTE: your AGENTS.override.md takes precedence and hides it"

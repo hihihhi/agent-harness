@@ -186,8 +186,8 @@ class Codex(Ctxd):
         (codex / "config.toml").write_text('[features]\nmemories = false\n')
         I.save_state(self.hh, I.apply(self.hh, [("codex", CodexAdapter().plan(self.ctx))], {}, [self.home]))
         cfg = codex / "config.toml"
-        self.assertTrue(cfg.read_text().rstrip().endswith("use_legacy_landlock = true"))
-        cfg.write_text(cfg.read_text() + "hooks = true\n")
+        self.assertIn("[features]\nmemories = false\nuse_legacy_landlock = true\n", cfg.read_text())
+        cfg.write_text(cfg.read_text().replace("memories = false\n", "memories = false\nhooks = true\n"))
         I.uninstall(self.hh, log=lambda m: None)
         got = I.load_toml(cfg.read_text())
         self.assertEqual(got.get("features"), {"memories": False, "hooks": True})

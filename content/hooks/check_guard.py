@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 TEST_FILE = re.compile(r"(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]*$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$|"
-                       r"(^|/)conftest\.py$|(^|/)\.github/workflows/|(^|/)gate[^/]*\.(sh|py)$", re.I)
+                       r"(^|/)conftest\.py$|(^|/)\.github/workflows/|(^|/)gates?([-_][^/]*)?\.(sh|py)$")
 ASSERT = re.compile(r"\bassert\b|\bassert[A-Z]\w*\s*\(|\bexpect\s*\(|\bshould\b\.|\.to(Be|Equal|Throw)\w*\(|"
                     r"\bassert_\w+\s*\(|pytest\.raises|assertRaises")
 SKIP = re.compile(r"(pytest\.mark\.(skip|skipif|xfail)|pytest\.skip\s*\(|unittest\.skip|skipIf|skipUnless|"
@@ -76,6 +76,22 @@ def pairs(tool: str, inp: dict, path: Path):
     return []
 
 
+def relative(path: Path, cwd: str) -> str:
+    """The path inside its project (git root, else the session's cwd), so /home/Test/... or a checkout under
+    a folder called test/ does not make every file look like a test."""
+    d = path.parent
+    for cand in (d,) + tuple(d.parents):
+        try:
+            if (cand / ".git").exists():
+                return path.relative_to(cand).as_posix()
+        except (OSError, ValueError):
+            continue
+    try:
+        return path.relative_to(Path(cwd)).as_posix()
+    except ValueError:
+        return path.name
+
+
 def decide(data: dict):
     if "check_guard" in {x.strip() for x in os.environ.get("HARNESS_DISABLE", "").split(",")}:
         return None
@@ -85,7 +101,7 @@ def decide(data: dict):
     if not fp or tool not in ("Edit", "Write", "MultiEdit"):
         return None
     path = Path(fp if os.path.isabs(fp) else os.path.join(data.get("cwd") or os.getcwd(), fp))
-    rel = str(path).replace(os.sep, "/")
+    rel = relative(path, data.get("cwd") or os.getcwd())
     if not TEST_FILE.search(rel) or not path.is_file():
         return None  # not a check, or a new file
     ps = pairs(tool, inp, path)       # a MultiEdit that moves an assertion counts once, as a whole

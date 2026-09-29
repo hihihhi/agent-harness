@@ -90,7 +90,7 @@ class ClaudeCodeAdapter(Adapter):
             "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": guard_command(ctx)}]},
                            {"matcher": "Edit|Write|MultiEdit",
                             "hooks": [{"type": "command", "command": check_guard_command(ctx)}]}],
-            "Stop": [{"hooks": [{"type": "command", "command": stop_command(ctx)}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": stop_command(ctx), "timeout": 30}]}],
             "SessionStart": [
                 {"matcher": "startup|resume|compact", "hooks": [{"type": "command", "command": digest_command(ctx)}]},
                 # prints only when this project has a saved state file; nothing (no tokens) otherwise
