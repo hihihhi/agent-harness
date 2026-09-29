@@ -22,6 +22,8 @@ class CodexAdapter(Adapter):
         project = ctx.scope == "project"
         codex = root / ".codex"
         tables = {f"mcp_servers.{n}": {"command": c[0], "args": c[1:]} for n, c in mcp_servers(ctx).items()}
+        # Codex MCP docs: default_tools_approval_mode = "auto" pre-approves this server's tools only.
+        tables["mcp_servers.harness"]["default_tools_approval_mode"] = "auto"
         note = "agent rules (replaces the file)"
         if not project and (codex / "AGENTS.override.md").is_file():
             note += "; NOTE: your AGENTS.override.md takes precedence and hides it"

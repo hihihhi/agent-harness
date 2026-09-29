@@ -215,7 +215,7 @@ class TestGemini(Base):
         ch = self.by_path(GeminiAdapter().plan(self.ctx()))
         self.assertEqual(ch[self.home / ".gemini" / "GEMINI.md"].content, RULES)
         s = ch[self.home / ".gemini" / "settings.json"].content
-        self.assertEqual(s["mcpServers"]["harness"], {"command": "python3", "args": self.cmd[1:]})
+        self.assertEqual(s["mcpServers"]["harness"], {"command": "python3", "args": self.cmd[1:], "trust": True})
         self.assertEqual(s["context"]["fileName"], ["AGENTS.md", "GEMINI.md"])
 
     def test_merge_keeps_user_values(self):

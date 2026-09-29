@@ -63,6 +63,16 @@ class ClaudeCode(Ctxd):
         post = ClaudeCodeAdapter().post_install(self.ctx)
         self.assertTrue(post[0].startswith("claude mcp add -s user harness -- python3 "))
 
+    def test_preapproves_only_our_server(self):
+        self.ctx.extra_mcp = {"fetch": ["uvx", "mcp-server-fetch"]}
+        s = next(c for c in ClaudeCodeAdapter().plan(self.ctx) if c.path.name == "settings.json").content
+        self.assertEqual(s["permissions"], {"allow": ["mcp__harness"]})
+        mine = {"permissions": {"allow": ["Bash(ls:*)", "mcp__other"], "deny": ["Read(./.env)"]}}
+        merged = I.json_merge(mine, s)
+        self.assertEqual(merged["permissions"]["allow"], ["Bash(ls:*)", "mcp__other", "mcp__harness"])
+        self.assertEqual(merged["permissions"]["deny"], ["Read(./.env)"])
+        self.assertEqual(I.json_unmerge(merged, s, mine), mine)
+
     def test_user_hooks_survive_merge(self):
         mine = {"hooks": {"SessionStart": [{"matcher": "startup", "hooks": [{"type": "command", "command": "me"}]}],
                           "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mine2"}]}]},
@@ -95,6 +105,39 @@ class Codex(Ctxd):
         self.assertEqual([t["command"]] + t["args"], I.mcp_cmd(self.hh))
         self.assertIn(".agents/skills/demo", ch)
         self.assertFalse(any("prompts" in k or "profiles" in k for k in ch))  # deprecated in Codex 0.134+
+
+    def test_preapproves_only_our_server(self):
+        self.ctx.extra_mcp = {"fetch": ["uvx", "mcp-server-fetch"]}
+        t = next(c for c in CodexAdapter().plan(self.ctx) if c.path.name == "config.toml").content
+        self.assertEqual(t["mcp_servers.harness"]["default_tools_approval_mode"], "auto")
+        self.assertNotIn("default_tools_approval_mode", t["mcp_servers.fetch"])
+        toml = I.load_toml(I.toml_merge('approval_policy = "on-request"\n', t))
+        self.assertEqual(toml["approval_policy"], "on-request")
+        self.assertEqual(toml["mcp_servers"]["harness"]["default_tools_approval_mode"], "auto")
+
+    def test_gemini_trusts_only_our_server(self):
+        try:
+            from agent_harness.adapters.gemini import GeminiAdapter  # noqa: F401
+        except ImportError:
+            self.skipTest("A3's gemini adapter not present")
+        g = all_adapters()["gemini"]
+        (self.home / ".gemini").mkdir()
+        (self.home / ".gemini" / "settings.json").write_text('{"mcpServers": {"mine": {"command": "x"}}}')
+        self.ctx.extra_mcp = {"fetch": ["uvx", "mcp-server-fetch"]}
+        ch = next(c for c in g.plan(self.ctx) if c.path.name == "settings.json")
+        data = I.render(ch)
+        servers = json.loads(data)["mcpServers"]
+        self.assertIs(servers["harness"]["trust"], True)
+        self.assertNotIn("trust", servers["fetch"])
+        self.assertEqual(servers["mine"], {"command": "x"})
+
+    def test_no_blanket_approval_anywhere(self):
+        """Copilot/VS Code and Cursor document no per-server pre-approval; nothing global may be set."""
+        for name, a in all_adapters().items():
+            for c in a.plan(self.ctx):
+                text = c.content if isinstance(c.content, str) else json.dumps(c.content, default=str)
+                for bad in ("chat.tools.global.autoApprove", '"mcp__*"', '"*"', "yolo"):
+                    self.assertNotIn(bad, text, f"{name}: {c.path}")
 
     def test_override_is_flagged(self):
         (self.home / ".codex").mkdir()
