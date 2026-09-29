@@ -1,0 +1,198 @@
+# Curated editor extensions, installed by `harness warmup` (or the last step of `harness install`)
+# only after you approve the list. Evidence checked live on 2026-09-30:
+#   VS Code Marketplace gallery API (publisher.isDomainVerified, install count, lastUpdated, source link,
+#   VSIX size) and Open VSX API (/api/<ns>/<name>: verified, repository, licence), and the GitHub API
+#   for each source repo (archived? last push).
+#
+# Fields
+#   id         extension id as `code --install-extension` takes it
+#   publisher  display name of the publisher
+#   verified   "yes" = the marketplace shows the publisher's domain as verified
+#   source     official source (or issue tracker, where the product is closed source)
+#   why        what it does for our work
+#   size_mb    approximate download size (VSIX), rounded up
+#   targets    "vscode" and/or "cursor"
+#   where      for Remote-SSH: "local" (runs on your laptop), "remote" (runs on the server), "both"
+#   requires   optional: only offered when that harness tool is chosen
+#   evidence   the numbers the decision rests on
+#
+# Microsoft's licences allow Pylance, Remote-SSH, Data Wrangler (and C/C++, Live Share) only in
+# Microsoft's VS Code products, so none of those is ever targeted at Cursor. Cursor ships its own
+# first-party equivalents from Anysphere, the company that makes Cursor.
+
+[settings]
+"telemetry.telemetryLevel" = "off"
+"redhat.telemetry.enabled" = false
+
+# ---------------------------------------------------------------- Python
+
+[[extension]]
+id = "ms-python.python"
+publisher = "Microsoft"
+verified = "yes"
+source = "https://github.com/Microsoft/vscode-python"
+why = "Python language support, environments, testing; the base every other Python tool builds on"
+size_mb = 19
+targets = ["vscode", "cursor"]
+where = "remote"
+evidence = "Marketplace: microsoft.com verified, 238.9M installs, updated 2026-09-25. Open VSX: verified, MIT, 59.5M downloads. Repo pushed 2026-09-29."
+
+[[extension]]
+id = "ms-python.vscode-pylance"
+publisher = "Microsoft"
+verified = "yes"
+source = "https://github.com/microsoft/pylance-release"
+why = "fast type checking, completions and go-to-definition for Python"
+size_mb = 30
+targets = ["vscode"]
+where = "remote"
+evidence = "Marketplace: microsoft.com verified, 205.6M installs, updated 2026-09-23. Closed source (repo is the issue tracker, pushed 2026-09-25). Licence: Microsoft products only; not on Open VSX."
+
+[[extension]]
+id = "anysphere.cursorpyright"
+publisher = "Anysphere (makers of Cursor)"
+verified = "yes"
+source = "https://forum.cursor.com/t/conflict-between-anysphere-cursorpyright-and-ms-python-python-over-python-venvpath-setting/145877"
+why = "Cursor's own Python language server, in place of Pylance which Cursor may not use"
+size_mb = 20
+targets = ["cursor"]
+where = "remote"
+evidence = "First-party: published by Anysphere in Cursor's own extension gallery (not on Open VSX). Size not measured."
+
+[[extension]]
+id = "ms-python.debugpy"
+publisher = "Microsoft"
+verified = "yes"
+source = "https://github.com/microsoft/vscode-python-debugger"
+why = "Python debugger: breakpoints in scripts, tests and notebooks"
+size_mb = 8
+targets = ["vscode", "cursor"]
+where = "remote"
+evidence = "Marketplace: microsoft.com verified, 144.3M installs, updated 2026-09-14. Open VSX: verified, MIT, 60.4M downloads. Repo pushed 2026-09-29."
+
+[[extension]]
+id = "charliermarsh.ruff"
+publisher = "Astral Software"
+verified = "yes"
+source = "https://github.com/astral-sh/ruff-vscode"
+why = "Ruff linter and formatter: catches bugs and keeps research code tidy, in milliseconds"
+size_mb = 12
+targets = ["vscode", "cursor"]
+where = "remote"
+evidence = "Marketplace: astral.sh verified, 4.7M installs, updated 2026-09-24. Open VSX: verified, MIT, 3.5M downloads, same version. Repo pushed 2026-09-29."
+
+# ---------------------------------------------------------------- notebooks and data
+
+[[extension]]
+id = "ms-toolsai.jupyter"
+publisher = "Microsoft"
+verified = "yes"
+source = "https://github.com/Microsoft/vscode-jupyter"
+why = "Jupyter notebooks and kernels inside the editor, on the server's Python"
+size_mb = 15
+targets = ["vscode", "cursor"]
+where = "remote"
+evidence = "Marketplace: microsoft.com verified, 109.7M installs, updated 2026-07-15 (pack incl. renderers, ~15 MB). Open VSX: verified, MIT, 10.4M downloads. Repo pushed 2026-09-10."
+
+[[extension]]
+id = "ms-toolsai.datawrangler"
+publisher = "Microsoft"
+verified = "yes"
+source = "https://github.com/microsoft/vscode-data-wrangler"
+why = "official viewer and cleaner for CSV, Parquet and DataFrames (the CSV/Parquet viewer)"
+size_mb = 19
+targets = ["vscode"]
+where = "remote"
+evidence = "Marketplace: microsoft.com verified, 2.3M installs, updated 2026-06-10. Not on Open VSX (Microsoft licence). Repo (issues) pushed 2025-12-03."
+
+# ---------------------------------------------------------------- remote
+
+[[extension]]
+id = "ms-vscode-remote.remote-ssh"
+publisher = "Microsoft"
+verified = "yes"
+source = "https://github.com/Microsoft/vscode-remote-release"
+why = "work on the Linux research server over SSH as if it were local"
+size_mb = 1
+targets = ["vscode"]
+where = "local"
+evidence = "Marketplace: microsoft.com verified, 37.7M installs, updated 2026-09-18, extensionKind ui. Licence: Microsoft products only; not on Open VSX. Repo pushed 2026-09-04."
+
+[[extension]]
+id = "anysphere.remote-ssh"
+publisher = "Anysphere (makers of Cursor)"
+verified = "yes"
+source = "https://forum.cursor.com/t/anysphere-remote-ssh-keeps-coming-back/159173"
+why = "Cursor's own Remote-SSH, in place of Microsoft's which Cursor may not use"
+size_mb = 2
+targets = ["cursor"]
+where = "local"
+evidence = "First-party: published by Anysphere in Cursor's own extension gallery (not on Open VSX). Conflicts with ms-vscode-remote.remote-ssh, which must not be installed in Cursor. Size not measured."
+
+# ---------------------------------------------------------------- config files and git
+
+[[extension]]
+id = "redhat.vscode-yaml"
+publisher = "Red Hat"
+verified = "yes"
+source = "https://github.com/redhat-developer/vscode-yaml"
+why = "YAML validation and completion (CI, configs, job specs); its telemetry is turned off below"
+size_mb = 2
+targets = ["vscode", "cursor"]
+where = "remote"
+evidence = "Marketplace: redhat.com verified, 29.3M installs, updated 2026-09-29. Open VSX: verified, MIT, 7.9M downloads. Repo pushed 2026-09-28."
+
+[[extension]]
+id = "GitHub.vscode-pull-request-github"
+publisher = "GitHub"
+verified = "yes"
+source = "https://github.com/Microsoft/vscode-pull-request-github"
+why = "review and merge GitHub pull requests and issues without leaving the editor"
+size_mb = 3
+targets = ["vscode", "cursor"]
+where = "remote"
+evidence = "Marketplace: github.com verified, 36.7M installs, updated 2026-09-28. Open VSX: verified, MIT, 6.6M downloads. Repo pushed 2026-09-29."
+
+# ---------------------------------------------------------------- AI tools (only for the tools you chose)
+
+[[extension]]
+id = "anthropic.claude-code"
+publisher = "Anthropic"
+verified = "yes"
+source = "https://github.com/anthropics/claude-code"
+why = "Claude Code in the editor, sharing the harness setup in ~/.claude"
+size_mb = 107
+targets = ["vscode", "cursor"]
+where = "remote"
+requires = "claude-code"
+evidence = "Marketplace: anthropic.com verified, 26.6M installs, updated 2026-09-28. Open VSX: verified, 53.4M downloads. Proprietary licence; repo (issues/changelog) pushed 2026-09-29."
+
+[[extension]]
+id = "openai.chatgpt"
+publisher = "OpenAI"
+verified = "yes"
+source = "https://github.com/openai/codex"
+why = "the Codex IDE extension, sharing ~/.codex/config.toml and AGENTS.md with the CLI"
+size_mb = 462
+targets = ["vscode", "cursor"]
+where = "remote"
+requires = "codex"
+evidence = "Marketplace: openai.com verified, 14.9M installs, updated 2026-09-23 (universal VSIX 462 MB). Open VSX: verified, 12.1M downloads. Proprietary licence; repo pushed 2026-09-29."
+
+# ---------------------------------------------------------------- considered and left out
+
+[[excluded]]
+id = "GitHub.copilot-chat"
+reason = "source repo archived 2026-05-20, last Marketplace update 2026-05-15: Copilot now ships with VS Code itself. The copilot-vscode adapter configures it."
+
+[[excluded]]
+id = "eamodio.gitlens"
+reason = "verified (gitkraken.com) and active, but pushes GitKraken account sign-up and paid features; left out by default."
+
+[[excluded]]
+id = "tamasfe.even-better-toml"
+reason = "publisher not domain-verified and last release 2024-12-20 (over 21 months old)."
+
+[[excluded]]
+id = "mechatroner.rainbow-csv"
+reason = "publisher not domain-verified; Data Wrangler (Microsoft) covers CSV and Parquet."

@@ -1,0 +1,24 @@
+# Example profile. Copy this folder OUTSIDE the repository, edit it, and install with:
+#   harness install --profile /path/to/your-profile
+# Use absolute paths or "~/..." (your home directory) in kb_paths.
+# Never put passwords, tokens or keys in a profile.
+
+name = "example"
+
+# Folders or files of Markdown/text the agent can search (partial retrieval, see docs/how-it-works.md).
+kb_paths = ["~/notes"]
+
+# Extra rules appended to the shared AGENTS.md for this deployment (a file in this folder).
+extra_rules = "rules.md"
+
+# The environment descriptor: what this machine is and how to use it. Indexed for kb_search
+# and pointed to from the rules.
+descriptor = "SERVER.md"
+
+[warmup]
+# Optional MCP plugins that `harness warmup` installs and registers. est_mb is the
+# expected disk use, shown before anything is downloaded.
+plugins = [
+  { name = "fetch", command = ["uvx", "mcp-server-fetch"], est_mb = 60 },
+  { name = "playwright", command = ["npx", "@playwright/mcp@latest"], est_mb = 400, optional = true },
+]
