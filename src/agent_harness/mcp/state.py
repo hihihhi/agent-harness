@@ -38,8 +38,11 @@ def project_root(project: Optional[os.PathLike] = None) -> Path:
     """Git root of `project` (default: HARNESS_PROJECT or cwd), else the directory itself."""
     start = Path(project or os.environ.get("HARNESS_PROJECT") or os.getcwd()).expanduser().resolve()
     for d in (start,) + tuple(start.parents):
-        if (d / ".git").exists():
-            return d
+        try:
+            if (d / ".git").exists():
+                return d
+        except OSError:          # a folder we may not read (e.g. another user's home): not a git root
+            continue
     return start
 
 

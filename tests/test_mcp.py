@@ -654,3 +654,35 @@ class IncrementalIndexTests(TmpCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnreadablePaths(unittest.TestCase):
+    """Found live on the server (2026-09-30): started from another user's home, the server walked up to
+    unreadable .git/docs folders and every tool failed with PermissionError. Unreadable must mean absent."""
+
+    def test_tools_work_from_an_unreadable_project(self):
+        import os, stat, tempfile
+        from pathlib import Path
+        from agent_harness.mcp import kb, state
+        if os.geteuid() == 0:
+            self.skipTest("root reads everything")
+        with tempfile.TemporaryDirectory() as t:
+            locked = Path(t) / "locked"
+            (locked / "docs").mkdir(parents=True)
+            (locked / "docs" / "x.md").write_text("# secret\nbody\n")
+            (locked / ".git").mkdir()
+            hh = Path(t) / "hh"
+            (hh / "profile").mkdir(parents=True)
+            (hh / "profile" / "SERVER.md").write_text("# Machine\nfour GPUs here\n")
+            proj = locked / "sub"
+            proj.mkdir()
+            os.chmod(locked, 0)
+            try:
+                paths = kb.default_kb_paths(hh, proj)
+                self.assertTrue(any(str(p).endswith("SERVER.md") for p in paths))
+                self.assertIsInstance(state.project_root(proj), Path)
+                k = kb.KB(home=hh, paths=paths) if "home" in kb.KB.__init__.__code__.co_varnames else kb.KB(hh, paths)
+                hits = k.search("four GPUs", 3)
+                self.assertTrue(hits, "the readable descriptor must still be found")
+            finally:
+                os.chmod(locked, stat.S_IRWXU)

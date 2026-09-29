@@ -16,6 +16,14 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 TEXT_SUFFIXES = {".md", ".markdown", ".mdx", ".txt", ".rst"}
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".tox", "archive"}
+
+def _ok(pred, p) -> bool:
+    """Path predicate that treats an unreadable path (PermissionError and friends) as absent."""
+    try:
+        return pred(p)
+    except OSError:
+        return False
+
 PART_BYTES = 4096
 SNIPPET_CHARS = 200
 MAX_FILE_BYTES = 2_000_000
@@ -287,9 +295,12 @@ def _profile_kb_paths(hh: Path) -> List[Path]:
     profile folder (the same rule as installer.kb_paths, so the install-time index and search agree)."""
     pdir = hh / "profile"
     f = pdir / "profile.toml"
-    if not f.is_file():
+    if not _ok(Path.is_file, f):
         return []
-    text = f.read_text(encoding="utf-8", errors="replace")
+    try:
+        text = f.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
     try:
         import tomllib  # type: ignore  # Python 3.11+
         val = tomllib.loads(text).get("kb_paths", [])
@@ -310,10 +321,14 @@ def _profile_folder(hh: Path) -> List[Path]:
     """The active profile folder (SERVER.md, rules). Its top-level files are roots of their own, so a
     descriptor gets the id `SERVER.md#...` exactly as in the install-time index; subfolders are dir roots."""
     pdir = hh / "profile"
-    if not pdir.is_dir():
+    if not _ok(Path.is_dir, pdir):
         return []
-    return sorted(p for p in pdir.iterdir()
-                  if not p.name.startswith(".") and (p.is_dir() or p.suffix.lower() in TEXT_SUFFIXES))
+    try:
+        entries = list(pdir.iterdir())
+    except OSError:
+        return []
+    return sorted(p for p in entries
+                  if not p.name.startswith(".") and (_ok(Path.is_dir, p) or p.suffix.lower() in TEXT_SUFFIXES))
 
 
 def default_kb_paths(hh: Path, project: Optional[Path] = None) -> List[Path]:
@@ -380,9 +395,9 @@ class KB:
         found: List[Tuple[Path, str]] = []
         used: set = set()
         for root in self.roots:
-            if root.is_file():
+            if _ok(Path.is_file, root):
                 items = [(root, root.name)]
-            elif root.is_dir():
+            elif _ok(Path.is_dir, root):
                 items = []
                 for dirpath, dirnames, filenames in os.walk(root):
                     dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not d.startswith("."))
@@ -441,8 +456,11 @@ class KB:
         if st.st_size > MAX_FILE_BYTES:
             text = ""
         else:
-            with open(key, "rb") as f:
-                text = f.read().decode("utf-8", "replace")
+            try:
+                with open(key, "rb") as f:
+                    text = f.read().decode("utf-8", "replace")
+            except OSError:                 # listed but unreadable for this user: index nothing
+                text = ""
         c = self.con
         for i, s in enumerate(split_sections(rel, text)):
             cur = c.execute(
