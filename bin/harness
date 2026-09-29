@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Thin launcher: works from a checkout (../src) or an install (<HARNESS_HOME>/lib)."""
+import os
+import sys
+from pathlib import Path
+
+here = Path(__file__).resolve().parent
+for cand in (here.parent / "src", Path(os.environ.get("HARNESS_HOME", Path.home() / ".agent-harness")) / "lib"):
+    if (cand / "agent_harness" / "cli.py").is_file():
+        sys.path.insert(0, str(cand))
+        break
+
+from agent_harness.cli import main  # noqa: E402
+
+sys.exit(main())

@@ -1,0 +1,199 @@
+"""Claude Code and Codex adapters, their hooks, and the live canary check (HARNESS_LIVE=1)."""
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tests"))
+
+from agent_harness import cli  # noqa: E402
+from agent_harness import installer as I  # noqa: E402
+from agent_harness.adapters import all_adapters  # noqa: E402
+from agent_harness.adapters.claude_code import ClaudeCodeAdapter  # noqa: E402
+from agent_harness.adapters.codex import CodexAdapter  # noqa: E402
+from test_installer import CANARY, make_source, run, snapshot  # noqa: E402
+
+
+class Ctxd(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+        self.src = make_source(self.tmp)
+        self.hh = self.home / ".agent-harness"
+        self.ctx = I.make_ctx(self.home, self.hh, self.src / "content", None)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+
+class ClaudeCode(Ctxd):
+    def test_registry_has_ours(self):
+        self.assertIn("claude-code", all_adapters())
+        self.assertIn("codex", all_adapters())
+
+    def test_plan_shape(self):
+        ch = {str(c.path.relative_to(self.home)): c for c in ClaudeCodeAdapter().plan(self.ctx)}
+        self.assertEqual(ch[".claude/CLAUDE.md"].kind, "replace")
+        self.assertIn(CANARY, ch[".claude/CLAUDE.md"].content)
+        s = ch[".claude/settings.json"].content
+        self.assertEqual(s["hooks"]["PreToolUse"][0]["matcher"], "Bash")
+        self.assertIn(str(self.hh / "content" / "hooks" / "guard.py"), s["hooks"]["PreToolUse"][0]["hooks"][0]["command"])
+        self.assertIn("_hook-stop", s["hooks"]["Stop"][0]["hooks"][0]["command"])
+        self.assertIn("_hook-prompt", s["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"])
+        starts = {e["matcher"]: e["hooks"][0]["command"] for e in s["hooks"]["SessionStart"]}
+        self.assertIn("memory digest", starts["startup|resume|compact"])
+        self.assertIn("state print", starts["resume|compact"])
+        self.assertIn("state_save", s["hooks"]["PreCompact"][0]["hooks"][0]["command"])
+        self.assertEqual(s["autoMemoryDirectory"], str(self.hh / "memory" / "claude-code"))
+        mcp = ch[".claude.json"].content["mcpServers"]["harness"]
+        self.assertEqual([mcp["command"]] + mcp["args"], I.mcp_cmd(self.hh))
+        self.assertEqual(ch[".agents/skills/demo"].kind, "copy-dir")
+        self.assertEqual(ch[".claude/skills/demo"].kind, "symlink")
+        self.assertEqual(ch[".claude/commands/hello.md"].kind, "replace")
+        post = ClaudeCodeAdapter().post_install(self.ctx)
+        self.assertTrue(post[0].startswith("claude mcp add -s user harness -- python3 "))
+
+    def test_user_hooks_survive_merge(self):
+        mine = {"hooks": {"SessionStart": [{"matcher": "startup", "hooks": [{"type": "command", "command": "me"}]}],
+                          "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mine2"}]}]},
+                "env": {"A": "1"}}
+        ours = next(c for c in ClaudeCodeAdapter().plan(self.ctx) if c.path.name == "settings.json").content
+        merged = I.json_merge(mine, ours)
+        self.assertEqual(merged["env"], {"A": "1"})
+        self.assertEqual(merged["hooks"]["SessionStart"][0], mine["hooks"]["SessionStart"][0])
+        self.assertEqual(len(merged["hooks"]["SessionStart"]), 3)
+        self.assertEqual(merged["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], "mine2")
+        self.assertEqual(len(merged["hooks"]["UserPromptSubmit"]), 2)
+        self.assertEqual(I.json_merge(merged, ours), merged)  # idempotent
+        self.assertEqual(I.json_unmerge(merged, ours, mine), mine)
+
+    def test_project_scope(self):
+        proj = self.tmp / "proj"
+        proj.mkdir()
+        ctx = I.make_ctx(self.home, self.hh, self.src / "content", None, proj)
+        paths = {c.path for c in ClaudeCodeAdapter().plan(ctx)}
+        self.assertIn(proj / "CLAUDE.md", paths)
+        self.assertIn(proj / ".mcp.json", paths)
+        self.assertTrue(all(str(p).startswith(str(proj)) for p in paths))
+
+
+class Codex(Ctxd):
+    def test_plan_shape(self):
+        ch = {str(c.path.relative_to(self.home)): c for c in CodexAdapter().plan(self.ctx)}
+        self.assertIn(CANARY, ch[".codex/AGENTS.md"].content)
+        t = ch[".codex/config.toml"].content["mcp_servers.harness"]
+        self.assertEqual([t["command"]] + t["args"], I.mcp_cmd(self.hh))
+        self.assertIn(".agents/skills/demo", ch)
+        self.assertFalse(any("prompts" in k or "profiles" in k for k in ch))  # deprecated in Codex 0.134+
+
+    def test_override_is_flagged(self):
+        (self.home / ".codex").mkdir()
+        (self.home / ".codex" / "AGENTS.override.md").write_text("x")
+        note = next(c.note for c in CodexAdapter().plan(self.ctx) if c.path.name == "AGENTS.md")
+        self.assertIn("AGENTS.override.md", note)
+
+
+class Hooks(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.env = mock.patch.dict(os.environ, {"HARNESS_HOME": str(self.tmp / "hh")})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def transcript(self, *entries):
+        p = self.tmp / "t.jsonl"
+        p.write_text("".join(json.dumps(e) + "\n" for e in entries))
+        return p
+
+    def stop(self, path, active=False):
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            rc = cli.stop_hook(io.StringIO(json.dumps(
+                {"session_id": "s1", "transcript_path": str(path), "stop_hook_active": active})))
+        self.assertEqual(rc, 0)
+        return buf.getvalue()
+
+    def test_stop_asks_once_per_turn_and_only_after_edits(self):
+        user = {"type": "user", "uuid": "u1", "message": {"content": "fix it"}}
+        read = {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read"}]}}
+        edit = {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Edit"}]}}
+        self.assertEqual(self.stop(self.transcript(user, read)), "")
+        p = self.transcript(user, read, edit)
+        out = json.loads(self.stop(p))
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("checks", out["reason"])
+        self.assertEqual(self.stop(p), "")  # not twice in the same turn
+        user2 = {"type": "user", "uuid": "u2", "message": {"content": [{"type": "text", "text": "again"}]}}
+        self.assertTrue(self.stop(self.transcript(user, edit, user2, edit)))
+        self.assertEqual(self.stop(p, active=True), "")
+
+    def test_hooks_never_fail(self):
+        for fn in (cli.stop_hook, cli.prompt_hook):
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                self.assertEqual(fn(io.StringIO("not json")), 0)
+            self.assertEqual(buf.getvalue(), "")
+
+    def test_recall_under_300ms_with_500_items(self):
+        try:
+            from agent_harness.mcp import memory as memmod
+        except ImportError:
+            self.skipTest("A1's memory module not present")
+        env = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
+        src = Path(memmod.__file__).read_text()
+        if "recall" not in src or "__main__" not in src:  # `-m` on a module without a CLI exits 0 silently
+            self.skipTest("A1's recall CLI not present yet")
+        m = memmod.Memory(home=self.tmp / "hh")
+        for i in range(500):
+            m.mem_add(f"fact {i}: service{i % 37} listens on port {8000 + i} and logs to /var/log/s{i}.log",
+                      tags=["t%d" % (i % 5)])
+        getattr(m, "close", lambda: None)()
+        best = 9.0
+        for i in range(3):
+            t = time.perf_counter()
+            p = subprocess.run([sys.executable, "-m", "agent_harness.mcp.memory", "recall", "--session", f"s{i}"],
+                               input="which port does service12 listen on", capture_output=True, text=True, env=env)
+            best = min(best, time.perf_counter() - t)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertIn("service12", p.stdout)  # a silent exit 0 must not pass as fast
+        self.assertLess(best, 0.300, f"recall took {best * 1000:.0f} ms")
+
+
+@unittest.skipUnless(os.environ.get("HARNESS_LIVE") == "1" and shutil.which("claude"),
+                     "live check: set HARNESS_LIVE=1 with `claude` on PATH")
+class LiveClaude(unittest.TestCase):
+    def test_claude_reads_the_rules(self):
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            home = tmp / "home"
+            home.mkdir()
+            src = make_source(tmp)
+            with mock.patch.dict(os.environ, {}):
+                os.environ.pop("HARNESS_HOME", None)
+                rc, out = run(home, "install", "--tools", "claude-code", "--yes", "--source", str(src))
+            self.assertEqual(rc, 0, out)
+            env = dict(os.environ, HOME=str(home))
+            env.pop("HARNESS_HOME", None)
+            p = subprocess.run(["claude", "-p", "What is the value of HARNESS_CANARY in your instructions? "
+                                "Answer with the value only.", "--max-turns", "1"],
+                               capture_output=True, text=True, env=env, timeout=180, cwd=str(tmp))
+            self.assertIn(CANARY.split("=", 1)[1], p.stdout, p.stdout + p.stderr)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    unittest.main()
