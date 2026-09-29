@@ -1,5 +1,6 @@
 """Tests for the harness MCP server, knowledge index and memory (unittest-style; pytest collects them too)."""
 import json
+import re
 import os
 import random
 import subprocess
@@ -81,13 +82,12 @@ def make_corpus(base: Path) -> Path:
 
 
 def index_ids(index: str):
-    """Full section ids from kb_index text: `## <page>` then `#slug[ — title]` lines."""
-    ids, page = [], None
+    """Full section ids from the compact index: `<page>: #slug #slug ...` lines."""
+    ids = []
     for line in index.splitlines():
-        if line.startswith("## "):
-            page = line[3:]
-        elif line.startswith("#") and page:
-            ids.append(page + line.split(" — ")[0])
+        m = re.match(r"^(\S+): (#\S+(?: #\S+)*)$", line)
+        if m:
+            ids += [m.group(1) + slug for slug in m.group(2).split()]
     return ids
 
 
@@ -130,16 +130,22 @@ class ToolsInProcessTests(TmpCase):
         (docs / "a.md").write_text("# Alpha\nintro\n## Install\nrun the installer with --yes\n## Usage\nuse it\n")
         srv = Server(home=self.home, kb_paths=[docs])
         self.assertEqual({t["name"] for t in TOOLS},
-                         {"kb_index", "kb_search", "kb_get", "kb_toc", "mem_add", "mem_search", "mem_forget",
+                         {"kb_search", "kb_get", "kb_toc", "mem_add", "mem_search", "mem_forget",
                           "lesson_add", "lesson_search", "state_save", "state_load", "session_note",
-                          "session_recent"})
+                          "session_recent", "run_checks"})
         for t in TOOLS:
             self.assertTrue(t["description"] and "\n" not in t["description"])
 
-        idx = srv.call_tool("kb_index", {})
-        self.assertIn("## docs/a.md\n", idx)
-        self.assertIn("\n#install\n", idx)
-        self.assertEqual(index_ids(idx)[1:], ["docs/a.md#install", "docs/a.md#usage"])
+        idx = srv.kb.build_index()
+        self.assertIn("\ndocs/a.md: #install #usage\n", idx)
+        self.assertEqual(index_ids(idx), ["docs/a.md#install", "docs/a.md#usage"])
+        page = srv.call_tool("kb_get", {"id": "docs/a.md"})       # a page name lists its sections
+        self.assertIn("docs/a.md#install", page["text"])
+        self.assertIn("docs/a.md#usage", page["text"])
+        self.assertNotIn("run the installer", page["text"])
+        top = srv.call_tool("kb_get", {"id": "docs/a.md#alpha"})  # the page's first section: body + list
+        self.assertIn("intro", top["text"])
+        self.assertIn("docs/a.md#install", top["text"])
         hits = srv.call_tool("kb_search", {"query": "installer"})
         self.assertEqual(hits[0]["id"], "docs/a.md#install")
         self.assertEqual(set(hits[0]), {"id", "title", "path", "snippet", "bytes", "score"})
@@ -264,28 +270,42 @@ class PartialRetrievalTests(TmpCase):
         root = make_corpus(self.tmp)
         kb = KB(home=self.home, paths=[root])
         full = kb.build_index(10 ** 7)
-        idx = kb.build_index(8000)
-        self.assertLessEqual(len(idx.encode()), 8000)
-        self.assertEqual(idx, full)  # the default cap holds the whole 40-file index
-        ids = index_ids(idx)
-        self.assertEqual(len(ids), kb.con.execute("SELECT COUNT(*) FROM kb_sections").fetchone()[0])
+        ids = index_ids(full)
+        lvl12 = kb.con.execute("SELECT COUNT(*) FROM kb_sections WHERE level = 2").fetchone()[0]
+        self.assertEqual(len(ids), lvl12)                     # every level-2 section, no ### ones
+        self.assertFalse(any("details" in i for i in ids))
+        self.assertIn(TARGET_ID, ids)
         for sid in ids:
             self.assertEqual(kb.get(sid)["id"], sid)
         self.assertEqual(kb.get("#rotating-the-backup-encryption-key")["id"], TARGET_ID)  # bare unique slug
-        trimmed = kb.build_index(4500)  # forces trimming: ### go first, ## and every page stay
-        self.assertLessEqual(len(trimmed.encode()), 4500)
-        tids = index_ids(trimmed)
-        self.assertGreaterEqual(len({i.split("#")[0] for i in tids}), 40)
-        self.assertIn(TARGET_ID, tids)
-        self.assertFalse(any("details" in i for i in tids))
-        self.assertIn("[omitted: headings deeper than level 2]", trimmed)
-        for sid in tids:
+        det = kb.build_index(10 ** 7, detail=["corpus/ops/*"])
+        self.assertEqual({i.split("#")[0] for i in index_ids(det)}, {"corpus/ops/backups.md"})
+        self.assertIn("Other pages: ", det)
+        self.assertEqual(det.count(".md"), 40 + 1 - 1)         # every page named once
+        trimmed = kb.build_index(3000)
+        self.assertLessEqual(len(trimmed.encode()), 3000)
+        for sid in index_ids(trimmed):
             self.assertEqual(kb.get(sid)["id"], sid)
-        tiny = kb.build_index(1000)
-        self.assertLessEqual(len(tiny.encode()), 1000)
-        self.assertIn("more pages", tiny)
-        print("\n[kb_index] %d bytes (untrimmed %d), %d ids, %.2f%% of corpus" % (
-            len(idx.encode()), len(full.encode()), len(ids), 100.0 * len(idx.encode()) / corpus_bytes(root)))
+        tiny = kb.build_index(600)
+        self.assertLessEqual(len(tiny.encode()), 600)
+        self.assertIn("more: kb_toc", tiny)
+        print("\n[index] %d bytes full, %d with 1 detailed page, %.2f%% of corpus" % (
+            len(full.encode()), len(det.encode()), 100.0 * len(det.encode()) / corpus_bytes(root)))
+        kb.close()
+
+    def test_index_lists_a_duplicate_page_once_and_excludes(self):
+        a, b = self.tmp / "p", self.tmp / "w"
+        a.mkdir()
+        b.mkdir()
+        body = "# Server\n## GPUs\nfour\n"
+        (a / "SERVER.md").write_text(body)
+        (b / "SERVER.md").write_text(body)
+        (a / "rules.md").write_text("# Rules\n## One\nx\n")
+        kb = KB(home=self.home, paths=[a / "SERVER.md", a / "rules.md", b])
+        idx = kb.build_index(exclude=["rules.md"])
+        self.assertEqual(index_ids(idx), ["SERVER.md#gpus"])
+        self.assertNotIn("w/SERVER.md", idx)
+        self.assertNotIn("rules.md", idx)
         kb.close()
 
 
@@ -584,7 +604,33 @@ class ProfileAndConflictTests(TmpCase):
                              "SERVER.md#gpu-queue")                  # same id as the install-time index
             self.assertEqual(srv.call_tool("kb_search", {"query": "quuxproxy"})[0]["id"], "wiki/net.md#proxy")
             self.assertEqual(srv.call_tool("kb_search", {"query": "flibber tips"})[0]["id"], "notes/n.md#tips")
-            self.assertIn("SERVER.md#gpu-queue", "".join(index_ids(srv.call_tool("kb_index", {}))))
+            self.assertIn("SERVER.md#gpu-queue", index_ids(srv.kb.build_index()))
+            self.assertEqual(srv.call_tool("kb_get", {"id": "profile/SERVER.md#gpu-queue"})["id"],
+                             "SERVER.md#gpu-queue")          # v0.1.0's printed form still resolves
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+
+    def test_project_docs_only_from_a_git_project_never_home(self):
+        """Eval 2026-09-30: kb_toc listed the admin's private ~/docs, indexed from a session started in $HOME."""
+        fake_home = self.tmp / "userhome"
+        (fake_home / "docs").mkdir(parents=True)
+        (fake_home / ".git").mkdir()                 # a dotfiles repo in $HOME is still not a project
+        proj = fake_home / "work" / "proj"
+        (proj / "docs").mkdir(parents=True)
+        (proj / ".git").mkdir()
+        loose = self.tmp / "scratch"
+        loose.mkdir()
+        old = dict(os.environ)
+        try:
+            os.environ.pop("HARNESS_KB_PATHS", None)
+            os.environ["HOME"] = str(fake_home)
+            self.assertNotIn(fake_home / "docs", kbmod.default_kb_paths(self.home, fake_home))
+            self.assertNotIn(fake_home / "docs", kbmod.default_kb_paths(self.home, fake_home / "Desktop"))
+            self.assertEqual(kbmod.default_kb_paths(self.home, loose), [])
+            got = kbmod.default_kb_paths(self.home, proj / "docs")
+            self.assertIn(proj.resolve() / "docs", got)
+            self.assertNotIn(self.home / "content", got)
         finally:
             os.environ.clear()
             os.environ.update(old)

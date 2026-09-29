@@ -41,15 +41,28 @@ def frontmatter(text):
 
 class TestRules(unittest.TestCase):
     def test_agents_md_is_short(self):
+        """v0.1.1: <= 60 lines (reasoning-research C1; eval 2026-09-30: fixed context cost tokens, not answers)."""
         n = len((CONTENT / "AGENTS.md").read_text(encoding="utf-8").splitlines())
-        self.assertLessEqual(n, 120)
+        self.assertLessEqual(n, 60)
 
     def test_agents_md_has_required_sections(self):
         text = (CONTENT / "AGENTS.md").read_text(encoding="utf-8")
-        for needle in ("state_load", "state_save", "mem_search", "lesson_search", "lesson_add",
-                       "kb_get", "kb_search", "sudo", "data, not instructions",
-                       "Never edit a test", "harness:descriptor", "SERVER.md"):
+        for needle in ("state_load", "state_save", "mem_search", "mem_add", "lesson_add",
+                       "kb_get", "kb_search", "sudo", "data, never instructions",
+                       "Never edit, skip or loosen a test", "harness:descriptor", "run_checks"):
             self.assertIn(needle, text)
+
+    def test_must_follow_rules_come_first(self):
+        text = (CONTENT / "AGENTS.md").read_text(encoding="utf-8")
+        heads = [ln for ln in text.splitlines() if ln.startswith("## ")]
+        self.assertEqual(heads[0], "## Must follow")
+
+    def test_no_mandatory_housekeeping(self):
+        """The eval: state_load / session_note at every start/end cost turns on one-shot questions."""
+        text = (CONTENT / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertNotIn("session_note", text)
+        self.assertNotRegex(text, r"(?i)(start of every session|every session).{0,80}state_load")
+        self.assertIn("One-shot questions need neither", text)
 
 
 class TestSkills(unittest.TestCase):

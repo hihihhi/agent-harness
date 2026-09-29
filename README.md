@@ -87,6 +87,9 @@ one copy.
 - **Prompts** (`content/prompts/`): plan, review, explain this repo, fix a failing test.
 - **Guard** (`content/hooks/guard.py`): blocks catastrophic commands before they run. You can
   also use it by hand: `python3 content/hooks/guard.py --check "rm -rf ~"`.
+- **Checks**: the `run_checks` tool runs the project's tests and returns only the failures; in
+  Claude Code a finish gate sends the agent back once if files changed since the last passing run,
+  and a check guard asks you before a test loses an assertion or gains a skip.
 - **Profiles** (optional): a folder describing your machine or team, for example a shared GPU
   server: where data lives, what the rules are. See `profiles/example/`. Keep your real
   profile outside this repository.

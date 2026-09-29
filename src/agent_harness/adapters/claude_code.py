@@ -1,6 +1,7 @@
 """Claude Code: CLAUDE.md, settings.json hooks, MCP in ~/.claude.json, skills, commands."""
 from __future__ import annotations
 
+import os
 import shlex
 from pathlib import Path
 from typing import List
@@ -10,6 +11,10 @@ from .base import Adapter, Ctx, FileChange, base_dir, list_dirs, list_md, mcp_se
 
 def guard_command(ctx: Ctx) -> str:
     return "python3 " + shlex.quote(str(ctx.harness_home / "content" / "hooks" / "guard.py"))
+
+
+def check_guard_command(ctx: Ctx) -> str:
+    return "python3 " + shlex.quote(str(ctx.harness_home / "content" / "hooks" / "check_guard.py"))
 
 
 def _lib_cmd(ctx: Ctx, module_args: str) -> str:
@@ -35,6 +40,33 @@ def prompt_command(ctx: Ctx) -> str:
     return _lib_cmd(ctx, "agent_harness.cli _hook-prompt")
 
 
+# Claude Code's managed instructions (loaded for every user, before ~/.claude/CLAUDE.md). When the profile's
+# extra rules are already there word for word (an organisation installs the same rules for everyone), they
+# are left out of CLAUDE.md: the same text twice costs every request its tokens and adds nothing.
+MANAGED_CLAUDE_MD = (Path("/etc/claude-code/CLAUDE.md"), Path("/Library/Application Support/ClaudeCode/CLAUDE.md"))
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.split())
+
+
+def claude_rules(ctx: Ctx) -> str:
+    extra = ctx.extra_rules.strip()
+    if not extra or extra not in ctx.rules:
+        return ctx.rules
+    env = os.environ.get("HARNESS_CLAUDE_MANAGED")
+    for f in ([Path(env)] if env else list(MANAGED_CLAUDE_MD)):
+        try:
+            managed = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _norm(extra) in _norm(managed):
+            head = extra.splitlines()[0].lstrip("# ").strip()
+            note = f"({head}: loaded from Claude Code's managed instructions, {f}.)"
+            return ctx.rules.replace(extra, note)
+    return ctx.rules
+
+
 # Hook semantics per the Claude Code hooks reference: SessionStart matchers are startup, resume,
 # clear, compact and fork, and its plain stdout is added to Claude's context; UserPromptSubmit gets
 # {prompt, session_id, ...} on stdin and its plain stdout is added to context too. PreCompact (matchers manual|auto)
@@ -55,11 +87,14 @@ class ClaudeCodeAdapter(Adapter):
         claude = root / ".claude"
         project = ctx.scope == "project"
         settings = {"hooks": {
-            "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": guard_command(ctx)}]}],
+            "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": guard_command(ctx)}]},
+                           {"matcher": "Edit|Write|MultiEdit",
+                            "hooks": [{"type": "command", "command": check_guard_command(ctx)}]}],
             "Stop": [{"hooks": [{"type": "command", "command": stop_command(ctx)}]}],
             "SessionStart": [
                 {"matcher": "startup|resume|compact", "hooks": [{"type": "command", "command": digest_command(ctx)}]},
-                {"matcher": "resume|compact", "hooks": [{"type": "command", "command": state_command(ctx)}]},
+                # prints only when this project has a saved state file; nothing (no tokens) otherwise
+                {"matcher": "startup|resume|compact", "hooks": [{"type": "command", "command": state_command(ctx)}]},
             ],
             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": prompt_command(ctx), "timeout": 5}]}],
             "PreCompact": [{"hooks": [{"type": "command", "command": "echo " + shlex.quote(PRECOMPACT_LINE)}]}],
@@ -71,8 +106,12 @@ class ClaudeCodeAdapter(Adapter):
             settings["autoMemoryDirectory"] = str(ctx.harness_home / "memory" / "claude-code")
         servers = {n: {"type": "stdio", "command": c[0], "args": c[1:], "env": {}}
                    for n, c in mcp_servers(ctx).items()}
+        # Our tools load up front (Claude Code MCP docs: "alwaysLoad": true bypasses tool-search deferral). With
+        # many other servers they were deferred, and 8 of 20 harness runs spent a turn on ToolSearch just to load
+        # kb_get (eval 2026-09-30). Warm-up plugins stay deferred.
+        servers["harness"]["alwaysLoad"] = True
         changes = [
-            FileChange(root / "CLAUDE.md" if project else claude / "CLAUDE.md", "replace", ctx.rules,
+            FileChange(root / "CLAUDE.md" if project else claude / "CLAUDE.md", "replace", claude_rules(ctx),
                        "agent rules (replaces the file)"),
             FileChange(claude / "settings.json", "merge-json", settings,
                        "adds a dangerous-command guard and a run-the-checks reminder; your hooks stay"),

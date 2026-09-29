@@ -45,7 +45,7 @@ new sessions.
 | the cause is not understood | 1 analyse (debug-systematically skill) |
 | a fact was missing or wrong | 2 research |
 | the plan was wrong or too big | 3 plan |
-| everything passed | done: `session_note`, `lesson_add` if something was learned |
+| everything passed | done: `session_note` if files changed, `lesson_add` if a check failed then passed |
 
 Stop and report honestly when the same stage fails twice the same way: change the approach, do
 not repeat it.

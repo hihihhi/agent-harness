@@ -29,6 +29,8 @@ src/agent_harness/mcp/memory.py          memory + lessons (self-learning)       
 content/AGENTS.md                        the one source of truth for agent behaviour       (A4)
 content/skills/<name>/SKILL.md           a few compact skills (progressive disclosure)     (A4)
 content/hooks/guard.py                   dangerous-command guard (PreToolUse-style)         (A4)
+content/hooks/check_guard.py             asks before a test/gate is weakened (PreToolUse on edits)
+src/agent_harness/mcp/checks.py          run_checks + the record the Stop gate reads
 content/prompts/*.md                     reusable prompts / slash commands                  (A4)
 profiles/example/profile.toml            example profile (public, generic)                  (A4)
 README.md, docs/                         user-facing, zero prior knowledge assumed          (A4)
@@ -44,7 +46,9 @@ scripts/secret-scan.sh                   leak scan incl. a planted-key control  
   `["python3", "<HARNESS_HOME>/lib/agent_harness/mcp/server.py"]` (the installer copies `src/agent_harness`
   to `<HARNESS_HOME>/lib/agent_harness`). Server name: `harness`.
 - Knowledge paths: env `HARNESS_KB_PATHS` (os.pathsep-separated dirs/files of Markdown/text), default =
-  profile `kb_paths` + `<HARNESS_HOME>/content` + the current project's `docs/`, `README.md`, `AGENTS.md`.
+  the profile folder's files + profile `kb_paths` + the current git project's `docs/`, `README.md`,
+  `AGENTS.md` (only inside a git project other than $HOME; the harness's own content is not indexed:
+  every tool loads it natively). The rules' Knowledge index uses the same profile roots, so its ids resolve.
 
 ## MCP tools (A1). Names, arguments, and the rule behind them
 
@@ -55,13 +59,14 @@ budget.
 | tool | args | returns |
 |---|---|---|
 | `kb_search` | `query: str, k: int=5` | list of `{id, title, path, snippet (<=200 chars), bytes}` (BM25 via SQLite FTS5; pure-Python BM25 fallback) |
-| `kb_get` | `id: str, max_bytes: int=8000` | the section text (heading-delimited), truncated with a note |
+| `kb_get` | `id: str, max_bytes: int=8000` | the section text (heading-delimited), truncated with a note; a page name alone (or its first section) also lists the page's section ids |
 | `kb_toc` | `path: str=""` | headings tree (ids + titles), no bodies |
 | `mem_add` | `text: str, tags: list[str]=[], scope: "user"|"project"="user"` | id; dedupes near-identical facts |
 | `mem_search` | `query: str, k: int=5` | `{id, text, tags, uses}` |
 | `mem_forget` | `id: str` | ok |
 | `lesson_add` | `mistake: str, fix: str, trigger: str` | id. Self-learning: recorded after a failure or correction |
 | `lesson_search` | `query: str, k: int=3` | the lessons relevant to the task at hand |
+| `run_checks` | `cmd: str="", timeout: int=300` | the project's checks run: exit code + only the failures and summary (<= 2 KB); recorded for the Stop gate |
 
 Caps (anti-bloat): memory 500 items/scope, lessons 200; beyond that the least-used, oldest are archived
 (not deleted). Items are one small JSON/Markdown file each + the SQLite index; human-readable.
