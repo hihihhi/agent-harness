@@ -84,14 +84,32 @@ def discover(root: Path) -> Optional[List[str]]:
     return None
 
 
+MAX_FILES = 20000
+
+
+def gated(root: Path) -> bool:
+    """The Stop gate and the fingerprint apply only inside a git project that is not $HOME itself."""
+    try:
+        return (root / ".git").exists() and root.resolve() != Path.home().resolve()
+    except OSError:
+        return False
+
+
 def fingerprint(root: Path) -> str:
-    """A hash of the project's files (path, size, mtime), ignoring caches and VCS dirs."""
+    """A hash of the project's files (path, size, mtime), ignoring caches and VCS dirs; '' when the project
+    is not gated or holds more than MAX_FILES files (then the gate stays out of the way)."""
+    if not gated(root):
+        return ""
     h = hashlib.sha1()
+    n = 0
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP)
         for fn in sorted(filenames):
             if fn.endswith((".pyc", ".pyo")):
                 continue
+            n += 1
+            if n > MAX_FILES:
+                return ""
             p = os.path.join(dirpath, fn)
             try:
                 st = os.stat(p)
@@ -158,12 +176,17 @@ def run_checks(cmd: str = "", timeout: int = DEFAULT_TIMEOUT, project: str = "",
 def unchecked_changes(root: Path, home=None) -> Tuple[bool, str]:
     """(True, why) when files changed since the last PASSING run_checks for this project."""
     root = project_root(root)
+    if not gated(root):
+        return False, ""
     try:
         rec = json.loads(record_path(root, home).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return True, "run_checks has not been run in this project"
     if rec.get("exit") != 0:
         return True, "the last run_checks failed (exit %s)" % rec.get("exit")
-    if rec.get("fingerprint") != fingerprint(root):
+    now = fingerprint(root)
+    if not now or not rec.get("fingerprint"):
+        return False, ""                    # too big to fingerprint: no gate rather than a slow one
+    if rec.get("fingerprint") != now:
         return True, "files changed since the last passing run_checks"
     return False, ""

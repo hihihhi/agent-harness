@@ -517,9 +517,10 @@ def stop_hook(stdin=None) -> int:
             return 0
         reason = STOP_REASON
         from .mcp import checks
-        if not checks.disabled("run_checks"):
-            from .mcp.state import project_root
-            stale, why = checks.unchecked_changes(project_root(data.get("cwd") or None))
+        from .mcp.state import project_root
+        root = project_root(data.get("cwd") or None)
+        if not checks.disabled("run_checks") and checks.gated(root) and checks.fingerprint(root):
+            stale, why = checks.unchecked_changes(root)
             if not stale:
                 return 0
             reason = GATE_REASON.format(why=why)

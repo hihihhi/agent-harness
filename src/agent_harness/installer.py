@@ -286,71 +286,119 @@ def _owned(path: Tuple[str, ...], tables: List[Tuple[str, ...]]) -> bool:
 
 
 def toml_remove(text: str, names: List[str]) -> Tuple[str, str]:
-    """Remove our tables (and their sub-tables). Returns (rest, removed-text). A shared "+name" table is
-    removed only as a whole block here (toml_merge re-adds it with the user's keys)."""
-    tables = [_norm_table(n[1:] if n.startswith(SHARED) else n) for n in names]
+    """Remove our WHOLE tables (and their sub-tables). Returns (rest, removed-text). Shared "+name" tables
+    are never removed here: only their keys are edited (_set_keys / _drop_keys)."""
+    tables = [_norm_table(n) for n in names if not n.startswith(SHARED)]
     keep, gone = [], []
     for path, raw in _split_blocks(text):
         (gone if path is not None and _owned(path, tables) else keep).append(raw)
     return "".join(keep), "".join(gone)
 
 
+# A table name starting with "+" (e.g. "+features") is SHARED with the user: our keys are set inside their
+# own [name] block, line by line (their other keys, sub-tables and comments stay as they are); uninstall
+# takes out only our keys. Plain names are ours whole.
+SHARED = "+"
+_KEYLINE = r"^\s*{key}\s*="
+
+
+def _header_index(blocks, path):
+    return next((i for i, (bp, _) in enumerate(blocks) if bp == path), None)
+
+
+def _defined_elsewhere(text: str, path: Tuple[str, ...]) -> bool:
+    """The table exists (dotted keys or an inline table) without a [name] header of its own."""
+    try:
+        d = load_toml(text)
+    except ValueError:
+        return False
+    for part in path:
+        if not isinstance(d, dict) or part not in d:
+            return False
+        d = d[part]
+    return True
+
+
+def _set_keys(text: str, name: str, body: dict) -> str:
+    path = _norm_table(name)
+    blocks = _split_blocks(text)
+    i = _header_index(blocks, path)
+    if i is None:
+        if _defined_elsewhere(text, path):
+            raise InstallError(f"your config defines [{name}] without a [{name}] header (dotted keys or an inline "
+                               f"table); write it as a [{name}] table, then retry")
+        head = "" if not text.strip() else ("\n" if text.endswith("\n") else "\n\n")
+        return text + head + toml_table(name, body)
+    raw = blocks[i][1]
+    lines = raw.splitlines(keepends=True)
+    for k, v in body.items():
+        new = f"{_toml_key(k)} = {_toml_val(v)}\n"
+        rx = re.compile(_KEYLINE.format(key=re.escape(_toml_key(k))))
+        hit = next((n for n, ln in enumerate(lines) if n > 0 and rx.match(ln)), None)
+        if hit is not None:
+            lines[hit] = new
+        else:
+            last = max(n for n, ln in enumerate(lines) if n == 0 or ln.strip())   # after the last non-blank line
+            if not lines[last].endswith("\n"):
+                lines[last] += "\n"
+            lines.insert(last + 1, new)
+    blocks[i] = (path, "".join(lines))
+    return "".join(r for _, r in blocks)
+
+
+def _drop_keys(text: str, name: str, body: dict, orig: str) -> str:
+    """Our keys out of the user's [name]; a key the original had gets the original's line back; the header
+    goes too when we created the table and nothing else is left in it."""
+    path = _norm_table(name)
+    blocks = _split_blocks(text)
+    i = _header_index(blocks, path)
+    if i is None:
+        return text
+    ob = _split_blocks(orig or "")
+    oi = _header_index(ob, path)
+    olines = ob[oi][1].splitlines(keepends=True) if oi is not None else []
+    lines = blocks[i][1].splitlines(keepends=True)
+    for k in body:
+        rx = re.compile(_KEYLINE.format(key=re.escape(_toml_key(k))))
+        hit = next((n for n, ln in enumerate(lines) if n > 0 and rx.match(ln)), None)
+        was = next((ln for n, ln in enumerate(olines) if n > 0 and rx.match(ln)), None)
+        if hit is not None:
+            if was is not None:
+                lines[hit] = was if was.endswith("\n") else was + "\n"
+            else:
+                del lines[hit]
+    if oi is None and not any(ln.strip() for ln in lines[1:]):
+        del blocks[i]
+        out = "".join(r for _, r in blocks)
+        return out.rstrip("\n") + "\n" if out.strip() else ""
+    blocks[i] = (path, "".join(lines))
+    return "".join(r for _, r in blocks)
+
+
 def toml_unmerge(text: str, patch: Dict[str, dict], orig: str) -> str:
     """Take one patch out of `text`: plain tables go (the original's copy comes back); from a shared
-    "+name" table only our keys go, each put back to the original's value when it had one."""
+    "+name" table only our keys go, each put back to the original's line when it had one."""
     whole = [n for n in patch if not n.startswith(SHARED)]
     rest, _ = toml_remove(text, whole)
-    if orig:
+    if orig and whole:
         _, ours_before = toml_remove(orig, whole)
         if ours_before:
             rest = rest + ("" if rest.endswith("\n") or not rest else "\n") + ours_before
     for n, body in patch.items():
-        if not n.startswith(SHARED):
-            continue
-        name = n[1:]
-        was = _existing(orig, name) if orig else {}
-        cur = {k: v for k, v in _existing(rest, name).items() if k not in body}
-        cur.update({k: was[k] for k in body if k in was})
-        rest, _ = toml_remove(rest, [name])
-        if cur:
-            if rest and not rest.endswith("\n"):
-                rest += "\n"
-            rest += ("\n" if rest.strip() else "") + toml_table(name, cur)
+        if n.startswith(SHARED):
+            rest = _drop_keys(rest, n[1:], body, orig)
     return rest
 
 
-# A table name starting with "+" (e.g. "+features") is SHARED with the user: our keys are merged into
-# their table and their other keys stay; uninstall takes out only our keys. Plain names are ours whole.
-SHARED = "+"
-
-
-def _table_body(raw: str, path: Tuple[str, ...]) -> dict:
-    d = load_toml(raw)
-    for part in path:
-        d = d.get(part, {}) if isinstance(d, dict) else {}
-    return {k: v for k, v in d.items() if not isinstance(v, dict)} if isinstance(d, dict) else {}
-
-
-def _existing(text: str, name: str) -> dict:
-    path = _norm_table(name)
-    for bpath, raw in _split_blocks(text):
-        if bpath == path:
-            return _table_body(raw, path)
-    return {}
-
-
 def toml_merge(text: str, tables: Dict[str, dict]) -> str:
-    bodies = {}
+    whole = {n: b for n, b in tables.items() if not n.startswith(SHARED)}
+    rest, _ = toml_remove(text, list(whole))
+    rest = rest.rstrip("\n") + "\n" if rest.strip() else ""       # no blank lines piling up per update
+    add = "\n".join(toml_table(n, b) for n, b in whole.items())
+    out = rest + ("\n" if rest and add else "") + add
     for n, b in tables.items():
-        name = n[1:] if n.startswith(SHARED) else n
-        bodies[name] = {**_existing(text, name), **b} if n.startswith(SHARED) else b
-    rest, _ = toml_remove(text, list(tables))
-    add = "\n".join(toml_table(n, b) for n, b in bodies.items())
-    if rest and not rest.endswith("\n"):
-        rest += "\n"
-    if rest.strip():
-        rest += "\n"
-    out = rest + add
+        if n.startswith(SHARED):
+            out = _set_keys(out, n[1:], b)
     try:
         load_toml(out)
     except ValueError as e:  # pragma: no cover - only on hand-broken configs
@@ -475,13 +523,18 @@ def render(change: FileChange, prior: Optional[list] = None, orig: Optional[Path
         return c.read_bytes() if isinstance(c, Path) else str(c).encode("utf-8")
     if change.kind == "merge-json":
         cur = _read_json(p)
-        base = _read_json(orig) if orig is not None else {}
+        base = {}
+        if prior and orig is not None:
+            try:
+                base = _read_json(orig)
+            except InstallError:      # a backup with comments: its values cannot be restored key by key
+                base = {}
         for old in reversed(prior):
             cur = json_unmerge(cur, old, base)
         return _dump_json(json_merge(cur, change.content))
     if change.kind == "merge-toml":
         text = p.read_text(encoding="utf-8") if p.exists() else ""
-        before = orig.read_text(encoding="utf-8") if orig is not None else ""
+        before = orig.read_text(encoding="utf-8") if (prior and orig is not None) else ""
         for old in reversed(prior):
             text = toml_unmerge(text, old, before)
         return toml_merge(text, change.content).encode("utf-8")
@@ -521,6 +574,17 @@ def check_roots(paths: List[Path], roots: List[Path]) -> None:
         raise InstallError("refusing to write outside " + ", ".join(str(r) for r in roots) + ": " + ", ".join(bad))
 
 
+def own_patches(e: Optional[dict], tool: str) -> list:
+    """The patch `tool` merged into this file earlier: from patch_by_tool, or, for a state written before
+    v0.1.1, the recorded patches when this tool was the file's only writer."""
+    if not e:
+        return []
+    by = e.get("patch_by_tool")
+    if by is not None:
+        return [by[tool]] if tool in by else []
+    return list(e.get("patches") or []) if e.get("tools") == [tool] else []
+
+
 def apply(hh: Path, tool_changes: List[Tuple[str, List[FileChange]]], state: dict,
           roots: Optional[List[Path]] = None) -> dict:
     """Back up, write, record. Everything is checked and rendered before the first write.
@@ -531,12 +595,14 @@ def apply(hh: Path, tool_changes: List[Tuple[str, List[FileChange]]], state: dic
     check_roots([Path(ch.path) for _, changes in tool_changes for ch in changes], roots + [hh])
     state["roots"] = sorted({str(r) for r in roots} | set(state.get("roots", [])))
     known = {e["path"]: e for e in state.get("entries", [])}
+    prior_of = {(str(Path(ch.path)), tool): own_patches(known.get(str(Path(ch.path))), tool)
+                for tool, changes in tool_changes for ch in changes}
     rendered = []
     for tool, changes in tool_changes:
         for ch in changes:
             e = known.get(str(Path(ch.path)))
             orig = hh / e["backup"] if e and e.get("backup") else None
-            rendered.append((tool, ch, render(ch, e.get("patches") if e else None, orig)))
+            rendered.append((tool, ch, render(ch, own_patches(e, tool), orig)))
     ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     backup = hh / "backup" / ts
     entries: Dict[str, dict] = {e["path"]: e for e in state.setdefault("entries", [])}
@@ -555,7 +621,11 @@ def apply(hh: Path, tool_changes: List[Tuple[str, List[FileChange]]], state: dic
         if tool not in e["tools"]:
             e["tools"].append(tool)
         if ch.kind in ("merge-json", "merge-toml"):
-            e["patches"] = [copy.deepcopy(ch.content)]   # render() took the earlier patches out
+            # one patch per tool: render() took out only THIS tool's earlier patch (two tools may share a file)
+            by = e.setdefault("patch_by_tool", {})
+            gone = prior_of.get((str(p), tool), [])
+            by[tool] = copy.deepcopy(ch.content)
+            e["patches"] = [x for x in e["patches"] if x not in gone and x not in by.values()] + list(by.values())
         p.parent.mkdir(parents=True, exist_ok=True)
         if ch.kind == "copy-dir":
             _remove_any(p)
