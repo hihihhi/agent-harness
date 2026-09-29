@@ -38,6 +38,7 @@ class GeminiAdapter(Adapter):
         refused: List[str] = []
         gdir = ctx.home / ".gemini"
         ours = {n: stdio_entry(c, with_type=False) for n, c in mcp_servers(ctx).items()}
+        ours["harness"]["trust"] = True  # documented: skips confirmations for THIS server only
 
         def build(existing: dict) -> dict:
             return {"mcpServers": merged_map(existing, "mcpServers", ours),

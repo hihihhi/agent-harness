@@ -64,6 +64,9 @@ class ClaudeCodeAdapter(Adapter):
             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": prompt_command(ctx), "timeout": 5}]}],
             "PreCompact": [{"hooks": [{"type": "command", "command": "echo " + shlex.quote(PRECOMPACT_LINE)}]}],
         }}
+        # Pre-approve our own server only (permissions docs: `mcp__<server>` matches all its tools).
+        # Warm-up plugins (fetch, playwright) are NOT pre-approved.
+        settings["permissions"] = {"allow": ["mcp__harness"]}
         if not project:  # user-level only; one memory dir the harness keeps with its own
             settings["autoMemoryDirectory"] = str(ctx.harness_home / "memory" / "claude-code")
         servers = {n: {"type": "stdio", "command": c[0], "args": c[1:], "env": {}}
