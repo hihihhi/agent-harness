@@ -5,6 +5,7 @@ Nothing but protocol messages is ever written to stdout; diagnostics go to stder
 """
 from __future__ import annotations
 
+import datetime
 import json
 import sys
 import traceback
@@ -13,11 +14,11 @@ from typing import Any, Callable, Dict, Optional
 
 if __package__ in (None, ""):  # executed as a script: make `agent_harness` importable
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    from agent_harness.mcp.kb import KB  # type: ignore
+    from agent_harness.mcp.kb import KB, harness_home  # type: ignore
     from agent_harness.mcp.memory import Memory  # type: ignore
     from agent_harness.mcp.state import State  # type: ignore
 else:
-    from .kb import KB
+    from .kb import KB, harness_home
     from .memory import Memory
     from .state import State
 
@@ -30,6 +31,43 @@ INSTRUCTIONS = (
     "Check lesson_search before a risky task, lesson_add after a failure or correction, "
     "mem_add for durable facts the user states."
 )
+# HARNESS_HOME/notices.json = {"notices": ["one line", ...]}: written by whatever installed the harness
+# (an organisation's own wrapper, e.g. "AI tools update available (v0.1.0 -> v0.2.0): run `acme ai update`"),
+# read here, never fetched. The first pending line joins the instructions of the first session of the
+# day (HARNESS_HOME/.notices-mcp-day), so the assistant mentions it once; none pending, nothing is added.
+NOTICES = "notices.json"
+NOTICES_DAY = ".notices-mcp-day"
+
+
+def notice_line(home=None, today: Optional[str] = None) -> str:
+    """The first pending notice, once a day; '' when none is pending, it was given today, or on any error."""
+    hh = harness_home(home)
+    try:
+        data = json.loads((hh / NOTICES).read_text(encoding="utf-8"))
+        notes = [n.strip() for n in data.get("notices", []) if isinstance(n, str) and n.strip()]
+    except (OSError, ValueError, AttributeError):
+        return ""
+    if not notes:
+        return ""
+    day = today or datetime.date.today().isoformat()
+    stamp = hh / NOTICES_DAY
+    try:
+        if stamp.read_text(encoding="utf-8").strip() == day:
+            return ""
+    except OSError:
+        pass
+    try:
+        stamp.write_text(day + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return " ".join(notes[0].split())[:300]
+
+
+def instructions(home=None) -> str:
+    line = notice_line(home)
+    if not line:
+        return INSTRUCTIONS
+    return INSTRUCTIONS + "\n\nNotice for the user (tell them once, in one line, then carry on): " + line
 
 
 def _s(**props) -> dict:
@@ -179,7 +217,7 @@ class Server:
                     "protocolVersion": want if want in PROTOCOL_VERSIONS else LATEST,
                     "capabilities": {"tools": {"listChanged": False}},
                     "serverInfo": SERVER_INFO,
-                    "instructions": INSTRUCTIONS,
+                    "instructions": instructions(self._home),
                 }
             elif method == "ping":
                 result = {}

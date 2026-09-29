@@ -79,6 +79,9 @@ one copy.
   `kb_get` for partial retrieval from your documents, `mem_add` / `mem_search` for facts and
   preferences, `lesson_add` / `lesson_search` for self-learning, and task state that survives
   compaction.
+  A wrapper that installs the harness for an organisation can leave one-line notices in
+  `~/.agent-harness/notices.json` (`{"notices": ["..."]}`, local, never fetched): the first one
+  joins the server's instructions in the first session of the day, so the assistant mentions it once.
 - **Skills** (`content/skills/`): debug systematically, verify before claiming done, trial-run
   data jobs small before large, write tests first. They load only when relevant.
 - **Prompts** (`content/prompts/`): plan, review, explain this repo, fix a failing test.

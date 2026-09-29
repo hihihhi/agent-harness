@@ -705,3 +705,59 @@ class DescriptorRanksFirst(unittest.TestCase):
             k = kb.KB(home=hh, paths=[wiki, hh / "profile" / "SERVER.md"])
             ids = [h["id"] for h in k.search("GPU memory per card", 3)]
             self.assertEqual(ids[0], "SERVER.md#machine", ids)
+
+
+class NoticeTests(TmpCase):
+    """HARNESS_HOME/notices.json: the first pending line joins the instructions of the first session
+    of the day, so the assistant tells the user once; nothing pending, nothing added; uninstall clears it."""
+
+    def _init(self):
+        from agent_harness.mcp.server import Server
+        r = Server(home=self.home).handle({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                           "params": {"protocolVersion": "2025-06-18"}})
+        return r["result"]["instructions"]
+
+    def _pending(self, *lines):
+        self.home.mkdir(parents=True, exist_ok=True)
+        (self.home / "notices.json").write_text(json.dumps({"notices": list(lines)}))
+
+    def test_nothing_pending_nothing_added(self):
+        from agent_harness.mcp.server import INSTRUCTIONS
+        self.assertEqual(self._init(), INSTRUCTIONS)          # no file
+        self._pending()
+        self.assertEqual(self._init(), INSTRUCTIONS)          # an empty list
+        (self.home / "notices.json").write_text("{not json")
+        self.assertEqual(self._init(), INSTRUCTIONS)          # unreadable: silence, never a crash
+        self.assertFalse((self.home / ".notices-mcp-day").exists())
+
+    def test_once_a_day(self):
+        from agent_harness.mcp.server import INSTRUCTIONS
+        line = "AI tools update available (v0.1.0 -> v0.2.0): run `acme ai update`"
+        self._pending(line, "a second notice waits its turn")
+        first = self._init()
+        self.assertTrue(first.startswith(INSTRUCTIONS))
+        self.assertTrue(first.endswith(line), first)
+        self.assertNotIn("second notice", first)
+        self.assertEqual(self._init(), INSTRUCTIONS)          # the same day: not again
+        (self.home / ".notices-mcp-day").write_text("2000-01-01\n")
+        self.assertTrue(self._init().endswith(line))          # the next day: once more
+
+    def test_subprocess_server_reads_harness_home(self):
+        self._pending("announcement: maintenance on Sunday")
+        env = dict(os.environ, HARNESS_HOME=str(self.home))
+        msg = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}}
+        p = subprocess.run([sys.executable, str(SRC / "agent_harness" / "mcp" / "server.py")],
+                           input=json.dumps(msg) + "\n", capture_output=True, text=True, env=env, timeout=60)
+        self.assertIn("maintenance on Sunday", json.loads(p.stdout)["result"]["instructions"])
+
+    def test_uninstall_removes_notices(self):
+        from agent_harness import cli
+        hh = self.tmp / "h" / ".agent-harness"
+        hh.mkdir(parents=True)
+        (hh / "notices.json").write_text('{"notices": ["x"]}')
+        (hh / ".notices-mcp-day").write_text("2000-01-01\n")
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"HARNESS_HOME": ""}):
+            self.assertEqual(cli.main(["--home", str(self.tmp / "h"), "uninstall"]), 0)
+        self.assertFalse((hh / "notices.json").exists())
+        self.assertFalse((hh / ".notices-mcp-day").exists())
