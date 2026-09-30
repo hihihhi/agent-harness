@@ -44,7 +44,7 @@ def _names(var: str) -> set:
     return {x.strip() for x in os.environ.get(var, "").split(",") if x.strip()}
 
 
-OFF_BY_DEFAULT = {"run_checks", "check_guard"}
+OFF_BY_DEFAULT = {"run_checks", "check_guard", "memory_snapshot", "skill_nudge"}   # arms: see docs/how-it-works.md
 
 
 def disabled(name: str) -> bool:

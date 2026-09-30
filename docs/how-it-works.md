@@ -76,6 +76,38 @@ each a sentence or two. At the start of related work, `lesson_search` brings bac
 relevant lessons, so the same mistake is not made twice, in any tool. Lessons are capped at 200;
 `harness learn` lists them, most used first.
 
+## Past conversations: session_search
+
+"What did we decide about the partition key last week?" is often answered nowhere but in an earlier
+conversation. `session_search(query)` searches the user's own local transcripts, in the tools' own
+files (Claude Code `~/.claude/projects/*/*.jsonl`, Codex `~/.codex/sessions/**/rollout-*.jsonl`), and
+returns a few dated excerpts with the session id and project; `session=<id>` narrows to one session.
+
+- Only what was said is indexed: the user's messages and the assistant's replies, not tool output,
+  thinking, or the rules the tool injects. Secrets are masked before anything is stored.
+- Only files the user owns are read, and symlinks are not followed. Nothing is sent anywhere.
+- The index (in `~/.agent-harness/index.sqlite`) grows by reading only what was appended since the last
+  search, newest sessions first, a few seconds per call at most; it is capped at 64 MB of text
+  (`HARNESS_SESSIONS_MAX_BYTES`), dropping the oldest sessions first. A transcript deleted by its tool
+  leaves the index too. The session asking is never its own result.
+
+## Skills learned from experience: skill_manage
+
+When an agent works out a multi-step procedure worth repeating, finds the working path after errors,
+or is corrected on how to do something, it saves the procedure with `skill_manage create` as
+`~/.agents/skills/learned/<name>/SKILL.md` (the agentskills.io format: `name`, `description`, then
+`## When to Use`, `## Procedure`, `## Pitfalls`, `## Verification`). The next session, in any tool,
+starts from the working path.
+
+- Codex, Gemini CLI, Cursor and Copilot list learned skills natively. Claude Code does not read
+  `~/.agents/skills`, and a listing costs every request, so for Claude the per-prompt recall names a
+  learned skill only when the prompt is about it.
+- A near-duplicate of any installed or learned skill is refused with the name to update instead;
+  `update` takes a new body or replaces one exact passage (`old` -> `new`) and bumps the version.
+- Limits: a body over 12,000 characters is refused (warning over 6,000); at most 40 learned skills are
+  active, and beyond that the least used (views, updates, and file access by other tools) move to
+  `~/.agent-harness/skills-archive/`, never deleted. Secrets are masked before writing.
+
 ## Task state: surviving compaction
 
 Long tasks outgrow the context window. When a tool compacts or resets the conversation, the
@@ -103,6 +135,11 @@ The rules ask for good behaviour; the harness enforces a floor where the tool al
   existing test loses an assertion or gains a skip. On 36 coding runs (v0.1.1 eval) no arm ever claimed a
   false "done" or weakened a test, so neither could show the gain the harness's keep rule asks for.
   `HARNESS_ENABLE=run_checks,check_guard` turns them on (the check guard is installed, inert).
+- **Arms for evaluation, off by default**: `memory_snapshot` puts the saved facts (most used first,
+  2,200 characters, as Hermes Agent's MEMORY.md) into the MCP server's instructions once per session,
+  instead of recalling only what is relevant; `skill_nudge` reminds the agent once, after a turn of 15 or
+  more tool calls with no skill saved, to save what it worked out. `HARNESS_ENABLE=memory_snapshot,skill_nudge`
+  turns them on.
 - **Memory recall** (Claude Code): relevant memories are attached to each prompt, within a strict
   time limit, so the agent does not need to search for them.
 

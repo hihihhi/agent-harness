@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime
 import json
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -18,12 +19,14 @@ if __package__ in (None, ""):  # executed as a script: make `agent_harness` impo
     from agent_harness.mcp import checks  # type: ignore
     from agent_harness.mcp.kb import KB, harness_home  # type: ignore
     from agent_harness.mcp.memory import Memory  # type: ignore
+    from agent_harness.mcp import sessions, skills  # type: ignore
     from agent_harness.mcp.state import State  # type: ignore
 else:
     from .. import __version__
     from . import checks
     from .kb import KB, harness_home
     from .memory import Memory
+    from . import sessions, skills
     from .state import State
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
@@ -66,11 +69,28 @@ def notice_line(home=None, today: Optional[str] = None) -> str:
     return " ".join(notes[0].split())[:300]
 
 
+def snapshot_text(home=None) -> str:
+    """Arm memory_snapshot (HARNESS_ENABLE=memory_snapshot; off by default: the owner asked for relevance-only
+    recall, kept unless measured better): the saved facts, frozen at session start ('' on any error)."""
+    if checks.disabled("memory_snapshot"):
+        return ""
+    try:
+        m = Memory(home=home)
+        try:
+            facts = m.snapshot()
+        finally:
+            m.close()
+    except Exception:
+        return ""
+    return "\n\nWhat you remember (saved facts, as of this session's start):\n" + facts.rstrip("\n") if facts else ""
+
+
 def instructions(home=None) -> str:
+    text = INSTRUCTIONS + snapshot_text(home)
     line = notice_line(home)
     if not line:
-        return INSTRUCTIONS
-    return INSTRUCTIONS + "\n\nNotice for the user (tell them once, in one line, then carry on): " + line
+        return text
+    return text + "\n\nNotice for the user (tell them once, in one line, then carry on): " + line
 
 
 def _s(**props) -> dict:
@@ -127,6 +147,20 @@ TOOLS = [
     {"name": "session_recent",
      "description": "The last k session notes for this project.",
      "inputSchema": _s(k={"type": "integer", "default": 5})},
+    {"name": "session_search",
+     "description": "Search the user's past conversations (Claude Code, Codex) for what was said or decided "
+                    "earlier: dated excerpts.",
+     "inputSchema": _s(query={"type": "string", "_req": True}, k={"type": "integer", "default": 5},
+                       session={"type": "string", "description": "only this session id (prefix)"})},
+    {"name": "skill_manage",
+     "description": "Procedures learned from experience. create one after you worked out a multi-step procedure "
+                    "worth repeating, found the working path after errors, or were corrected on how to do it; "
+                    "body sections: ## When to Use, ## Procedure, ## Pitfalls, ## Verification. update improves "
+                    "one (body, or old -> new); list, view, archive.",
+     "inputSchema": _s(action={"type": "string", "enum": ["create", "update", "list", "view", "archive"],
+                               "_req": True},
+                       name={"type": "string"}, description={"type": "string"}, body={"type": "string"},
+                       old={"type": "string"}, new={"type": "string"})},
     {"name": "run_checks",
      "description": "Run this project's own tests/checks (found automatically, or cmd) and return only the "
                     "failures and the summary (<=2 KB). Use after your last edit.",
@@ -146,6 +180,9 @@ class Server:
         self._kb: Optional[KB] = None
         self._mem: Optional[Memory] = None
         self._state: Optional[State] = None
+        self._sessions = None
+        self._skills = None
+        self._started = time.time()   # sessions that began after this are the one asking: not a past conversation
 
     @property
     def kb(self) -> KB:
@@ -165,6 +202,35 @@ class Server:
             self._state = State(home=self._home)
         return self._state
 
+    @property
+    def sessions(self):
+        if self._sessions is None:
+            self._sessions = sessions.Sessions(home=self._home, fts=self._fts)
+        return self._sessions
+
+    @property
+    def skills(self):
+        if self._skills is None:
+            self._skills = skills.Skills(home=self._home)
+        return self._skills
+
+    def skill_manage(self, a: Dict[str, Any]) -> Any:
+        act, name = a.get("action"), (a.get("name") or "").strip()
+        if act == "list":
+            return self.skills.list()
+        if not name:
+            raise ValueError("missing argument: name")
+        if act == "create":
+            return self.skills.create(name, a.get("description") or "", a.get("body") or "")
+        if act == "update":
+            return self.skills.update(name, a.get("description") or "", a.get("body") or "", a.get("old") or "",
+                                      a.get("new") or "")
+        if act == "view":
+            return self.skills.view(name)
+        if act == "archive":
+            return self.skills.archive(name)
+        raise ValueError("action must be create, update, list, view or archive")
+
     # ------------------------------------------------------------ tools
     def call_tool(self, name: str, args: Dict[str, Any]) -> Any:
         """Run a tool in-process and return its Python result."""
@@ -183,6 +249,9 @@ class Server:
             "state_load": lambda: self.state.state_load(a.get("project", "") or ""),
             "session_note": lambda: self.state.session_note(a["summary"]),
             "session_recent": lambda: self.state.session_recent(int(a.get("k", 5))),
+            "session_search": lambda: self.sessions.search(a["query"], int(a.get("k", 5)), a.get("session", "") or "",
+                                                           before=self._started - 5),
+            "skill_manage": lambda: self.skill_manage(a),
             "run_checks": lambda: checks.run_checks(a.get("cmd", "") or "", int(a.get("timeout", 300)),
                                                     home=self._home),
         }
@@ -198,6 +267,11 @@ class Server:
             if result.get("next_part"):
                 head += "; continues in %s" % result["next_part"]
             return head + "\n" + result["text"]
+        if name == "session_search":
+            return sessions.render(result)
+        if name == "skill_manage":
+            return skills.render("view" if isinstance(result, str) else "list" if isinstance(result, list) else "",
+                                 result)
         if name == "run_checks":
             if result.get("exit") is None:
                 return result["output"]

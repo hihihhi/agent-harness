@@ -29,9 +29,12 @@ tool only when nothing there fits. Never read a whole document when a section wi
 ## Memory
 
 - Asked about the user's own setup, folders, preferences or earlier decisions, and no memory came
-  with the prompt: `mem_search` once with the specific terms before answering. Empty means none.
+  with the prompt: `mem_search` once with the specific terms before answering; for what was said or
+  decided in an earlier conversation, `session_search`. Empty means none.
 - Told to remember something, or a durable preference: `mem_add`, one short fact. Never secrets
   or personal data. After a check failed then passed, or a correction from the user: `lesson_add`.
+- Worked out a multi-step procedure worth repeating, found the working path after errors, or were
+  corrected on how to do it: `skill_manage` create (or update the matching skill).
 - Unfinished multi-step work: `state_save` (goal, stage, decisions, next); after a compaction,
   `state_load`. One-shot questions need neither.
 
