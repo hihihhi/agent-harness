@@ -66,6 +66,10 @@ Remote-SSH: install the harness on the machine where the tool runs.
 | JupyterLab (Jupyter AI) | rules for notebook assistants | not applicable |
 | anything else that reads `AGENTS.md` | the shared rules file | the same |
 
+Cursor reads `.cursor/mcp.json` in every open folder as well as in your home, so a workspace that
+opens your home folder itself loads the memory tools twice (once as "user", once as "project"). It
+works, but the tool list is doubled; open a project folder rather than the home to avoid it.
+
 Skills are installed once in `~/.agents/skills/`, which Codex, Gemini CLI, Cursor and Copilot
 read. Claude Code gets a link to the same folder at `~/.claude/skills/`, so every tool uses
 one copy.
