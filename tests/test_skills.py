@@ -55,7 +55,7 @@ class CreateTest(Base):
         f = self.home / ".agents" / "skills" / "learned" / "count-sz-fills" / "SKILL.md"
         self.assertEqual(res["path"], str(f))
         text = f.read_text()
-        self.assertTrue(text.startswith("---\nname: count-sz-fills\ndescription: Count executed trades"))
+        self.assertTrue(text.startswith('---\nname: count-sz-fills\ndescription: "Count executed trades'))
         fm = K._front(text)
         self.assertEqual((fm["name"], fm["version"]), ("count-sz-fills", "1"))
         self.assertIn("origin: learned", text)
@@ -89,6 +89,24 @@ class CreateTest(Base):
         with self.assertRaises(ValueError):
             self.sk.create("vwap-continuous", "something else entirely different words", BODY)   # same name
 
+    def test_description_with_a_colon_stays_one_value(self):
+        desc = "Use when: the key expired #3 and [x] matters"
+        self.sk.create("colon-desc", desc, BODY)
+        text = (self.home / ".agents" / "skills" / "learned" / "colon-desc" / "SKILL.md").read_text()
+        self.assertIn('description: "Use when: the key expired #3 and [x] matters"', text)
+        self.assertEqual(K._front(text)["description"], desc)
+
+    def test_names_never_leave_the_learned_folder(self):
+        own = self.home / ".claude" / "skills" / "deploy"
+        own.mkdir(parents=True)
+        (own / "SKILL.md").write_text("---\nname: deploy\ndescription: mine\n---\n\nmy body\n")
+        for bad in ("../../../.claude/skills/deploy", str(own), "../x"):
+            with self.assertRaises(ValueError, msg=bad):
+                self.sk.update(bad, body=BODY)
+            with self.assertRaises(ValueError, msg=bad):
+                self.sk.archive(bad)
+        self.assertIn("my body", (own / "SKILL.md").read_text())
+
     def test_secrets_are_redacted_before_writing(self):
         key = "sk-" + "ant-" + "Z" * 30
         self.sk.create("with-key", DESC, BODY + "\nexport API_KEY=%s\n" % key)
@@ -109,6 +127,9 @@ class UpdateViewListTest(Base):
         self.assertEqual(json.loads((self.hh / "skills-usage.json").read_text())["count-sz-fills"]["uses"], 2)
         with self.assertRaises(ValueError):
             self.sk.update("count-sz-fills", old="not in the body", new="x")
+        self.sk.update("count-sz-fills", body=BODY + "\nexport API_KEY=TBD\n")
+        self.sk.update("count-sz-fills", old="TBD", new="hunter2hunter2")   # split across old/new
+        self.assertNotIn("hunter2hunter2", self.sk.view("count-sz-fills"))
         with self.assertRaises(ValueError):
             self.sk.update("count-sz-fills", body="no sections at all")
         with self.assertRaises(ValueError):

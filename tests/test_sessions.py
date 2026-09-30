@@ -186,6 +186,34 @@ class SearchTest(Base):
         cut = S._epoch("2026-09-25T00:00:00Z")
         self.assertEqual(self.texts(self.sess().search("turnstone", before=cut)), ["turnstone earlier talk"])
 
+    def test_a_resumed_transcript_keeps_its_past_but_not_the_asking_turn(self):
+        self.claude_file("resu", [cl("user", "stilt old decision", ts="2026-09-20T10:00:00Z"),
+                                  cl("user", "stilt what did we decide", ts="2026-09-30T10:00:00Z")])
+        cut = S._epoch("2026-09-25T00:00:00Z")
+        self.assertEqual(self.texts(self.sess().search("stilt", before=cut)), ["stilt old decision"])
+
+    def test_two_servers_sharing_the_index_store_a_message_once(self):
+        self.claude_file("race", [cl("user", "phalarope once")])
+        a, b = self.sess(), self.sess()
+        real = S.Sessions.files
+
+        def files_then_other_server_syncs(self_):
+            out = real(self_)
+            if self_ is a:
+                b.sync()                   # the other session's server reads the same file in between
+            return out
+        with mock.patch.object(S.Sessions, "files", files_then_other_server_syncs):
+            a.sync()
+        self.assertEqual(len(a.search("phalarope")["results"]), 1)
+        self.assertEqual(a.con.execute("SELECT COUNT(*) FROM sess_msgs").fetchone()[0], 1)
+
+    def test_a_secret_across_the_length_cut_is_not_half_stored(self):
+        tokn = "gh" + "p_" + "A" * 36
+        self.claude_file("cut", [cl("user", "grebe " + "x " * ((S.MSG_CHARS - 20) // 2) + tokn)])
+        s = self.sess()
+        s.sync()
+        self.assertNotIn("ghp_", "\n".join(s.con.iterdump()))
+
     def test_filter_by_session_prefix(self):
         self.claude_file("aaaa0000-1", [cl("user", "whimbrel one")])
         self.claude_file("bbbb0000-2", [cl("user", "whimbrel two")])

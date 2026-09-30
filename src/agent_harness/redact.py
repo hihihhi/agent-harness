@@ -21,10 +21,17 @@ _PATTERNS = [
     re.compile(r"xox[abprs]-[A-Za-z0-9-]{10,}"),
     re.compile(r"eyJ[A-Za-z0-9_-]{15,}\.eyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]*"),
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}"),
+    re.compile(r"(?i)\bbasic\s+[A-Za-z0-9+/=]{12,}"),
+    re.compile(r"\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"),      # Stripe
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"),                         # GitLab
+    re.compile(r"\bhf_[A-Za-z0-9]{30,}"),                              # Hugging Face
+    re.compile(r"(?<=://)[^/\s:@]+:[^@\s/]+(?=@)"),                    # user:password@ in a URL
+    re.compile(r"(?<=\s)-p(?![\s-])\S{8,}"),                           # mysql -pSECRET
+    re.compile(r"(?i)(?<=--password)[= ]\S+"),
 ]
 # password = "value", API_KEY=value, token: value -> keep the name, mask the value (8+ chars, as the scan)
 _ASSIGN = re.compile(r"(?i)((?:password|passwd|secret|api_?key|access_?token|auth_?token|token)[A-Za-z0-9_]*"
-                     r"[\"']?\s*[:=]\s*)([\"']?)([^\"'\s]{8,})\2")
+                     r"[\"']?\s*[:=]\s*)(\"[^\"\n]{8,}\"|'[^'\n]{8,}'|[^\"'\s]{8,})")   # quoted values may hold spaces
 
 
 def redact(text: str) -> str:

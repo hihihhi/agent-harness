@@ -54,8 +54,20 @@ class RedactTest(unittest.TestCase):
         self.assertNotIn("abcd1234efgh5678", out)
         self.assertNotIn("q" * 30, out)
 
+    def test_conversation_shapes(self):
+        for raw, secret in (("postgres://admin:S3cretPassw0rd@db/x", "S3cretPassw0rd"),
+                            ("mysql -uroot -pS3cretPassw0rd db", "S3cretPassw0rd"),
+                            ("login --password S3cretPassw0rd now", "S3cretPassw0rd"),
+                            ("Authorization: Basic " + "YWxhZGRpbjpvcGVuc2VzYW1l", "YWxhZGRpbjpvcGVuc2VzYW1l"),
+                            ('password = "correct horse battery staple"', "correct horse"),
+                            ("sk_" + "live_" + "a1b2c3d4e5f6g7h8i9j0", "a1b2c3d4e5f6g7h8i9j0"),
+                            ("glpat" + "-" + "abcdefghij0123456789xy", "abcdefghij0123456789xy"),
+                            ("hf" + "_" + "A" * 34, "A" * 34)):
+            self.assertNotIn(secret, redact(raw), raw)
+
     def test_ordinary_text_untouched(self):
-        text = "The token budget is 4096 and the password policy needs 12 characters; see docs/keys.md"
+        text = ("The token budget is 4096 and the password policy needs 12 characters; see docs/keys.md; "
+                "run mkdir -p ~/acme-data and open https://example.org/a:b")
         self.assertEqual(redact(text), text)
 
 
