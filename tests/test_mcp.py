@@ -132,7 +132,7 @@ class ToolsInProcessTests(TmpCase):
         self.assertEqual({t["name"] for t in TOOLS},
                          {"kb_search", "kb_get", "kb_toc", "mem_add", "mem_search", "mem_forget",
                           "lesson_add", "lesson_search", "state_save", "state_load", "session_note",
-                          "session_recent", "run_checks"})
+                          "session_recent", "session_search", "skill_manage", "run_checks"})
         from agent_harness.mcp.server import tool_list
         self.assertNotIn("run_checks", [t["name"] for t in tool_list()])   # off by default (v0.1.1 eval)
         for t in TOOLS:

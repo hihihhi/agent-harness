@@ -26,9 +26,11 @@ from typing import Dict, List, Optional, Sequence, Tuple
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from agent_harness.mcp import kb as _kb  # type: ignore
+    from agent_harness.mcp.skills import Skills  # type: ignore
     from agent_harness.mcp.state import State, project_root  # type: ignore
 else:
     from . import kb as _kb
+    from .skills import Skills
     from .state import State, project_root
 
 CAPS = {"memory": 500, "lessons": 200}
@@ -45,6 +47,7 @@ RECALL_TTL_DAYS = 7
 #   close restatements ("please make the tests pass", "how do I deploy a release")            0.48-0.61
 # 0.2 sits in the gap between the second and third rows.
 MEM_MIN_SCORE = 0.2
+SNAPSHOT_CHARS = 2200     # Hermes' MEMORY.md cap
 
 
 def _norm_set(text: str) -> set:
@@ -61,8 +64,10 @@ def jaccard(a: str, b: str) -> float:
 class Memory:
     def __init__(self, home: Optional[os.PathLike] = None, fts: Optional[bool] = None,
                  caps: Optional[Dict[str, int]] = None, project: Optional[os.PathLike] = None,
-                 db_path: Optional[os.PathLike] = None):
+                 db_path: Optional[os.PathLike] = None, user_home: Optional[os.PathLike] = None):
         self.home = _kb.harness_home(home)
+        # whose ~/.agents/skills the recall reads: the real home in use; next to an explicit harness home in tests
+        self.user_home = Path(user_home) if user_home else (Path.home() if home is None else self.home.parent)
         self.fts = _kb.fts5_available() if fts is None else (fts and _kb.fts5_available())
         self.caps = dict(CAPS, **(caps or {}))
         self.project = str(project_root(project))
@@ -326,6 +331,22 @@ class Memory:
                          % _dt.datetime.fromtimestamp(st.stat().st_mtime).strftime("%Y-%m-%d %H:%M"))
         return _fit(lines, max_bytes)
 
+    def snapshot(self, max_chars: int = SNAPSHOT_CHARS) -> str:
+        """Arm memory_snapshot (off by default): the saved facts visible here, most used and newest first, as
+        Hermes injects MEMORY.md, frozen once per session; cut at max_chars. Does not bump uses."""
+        self.sync()
+        vis, params = self._visible("memory")
+        rows = self.con.execute("SELECT text FROM mem_items WHERE %s ORDER BY uses DESC, updated DESC" % vis,
+                                params).fetchall()
+        out, size = [], 0
+        for r in rows:
+            line = "- %s\n" % _one_line(r["text"])
+            if size + len(line) > max_chars:
+                break
+            out.append(line)
+            size += len(line)
+        return "".join(out)
+
     def recall(self, prompt: str, session: str, max_bytes: int = 1200,
                min_score: Optional[float] = None) -> str:
         """Memories and lessons relevant to `prompt`, most relevant first, within max_bytes, skipping
@@ -344,12 +365,28 @@ class Memory:
         seen = set(seen_f.read_text(encoding="utf-8").split()) if seen_f.exists() else set()
         hits = [(sc, r) for kind in ("memory", "lesson") for sc, r in self.scored(kind, prompt, min_score)
                 if r["id"] not in seen]
+        # learned skills: Claude Code does not list ~/.agents/skills, so a relevant one is named here
+        try:
+            hits += [(sc, {"id": "skill:" + n, "kind": "skill", "name": n, "description": d})
+                     for sc, n, d in Skills(home=self.home, user_home=self.user_home).scored(prompt)
+                     if "skill:" + n not in seen]
+        except OSError:
+            pass
         hits.sort(key=lambda x: -x[0])
         if not hits:
             return ""
         lines, used = ["Recalled from harness memory (relevant to this prompt):\n"], []
         size = len(lines[0].encode("utf-8"))
         for _, r in hits:
+            if r["kind"] == "skill":
+                line = "- learned skill %s: %s (skill_manage view %s)\n" % (r["name"], _one_line(r["description"], 200),
+                                                                          r["name"])
+                b = len(line.encode("utf-8"))
+                if size + b <= max_bytes:
+                    lines.append(line)
+                    size += b
+                    used.append(r)
+                continue
             i = json.loads(r["data"])
             if r["kind"] == "lesson":
                 line = "- lesson: when %s -> %s (mistake was: %s)\n" % (
@@ -366,7 +403,8 @@ class Memory:
         if not used:
             return ""
         for r in used:
-            self._bump(r, json.loads(r["data"]))
+            if r["kind"] != "skill":
+                self._bump(r, json.loads(r["data"]))
         self.con.commit()
         with open(seen_f, "a", encoding="utf-8") as f:
             f.write("".join(r["id"] + "\n" for r in used))

@@ -489,6 +489,11 @@ STOP_REASON = ("Files changed: before you finish, run this project's checks (tes
 GATE_REASON = ("Files changed since the last passing run_checks ({why}): call run_checks and report its result, "
                "or say why this project cannot be checked. Then session_note in one line.")
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+# Arm skill_nudge (HARNESS_ENABLE=skill_nudge; off by default until the eval shows it helps): after a long turn
+# with no skill saved, one reminder, as Hermes' post-session review but inside the session.
+NUDGE_TOOLS = 15
+NUDGE_REASON = ("Long task: if you worked out a procedure worth repeating, found the working path after errors, "
+                "or were corrected, save it now with skill_manage (one call); otherwise just finish.")
 
 
 def _own_memory(path: str) -> bool:
@@ -516,7 +521,7 @@ def stop_hook(stdin=None) -> int:
         data = json.loads((stdin or sys.stdin).read() or "{}")
         if data.get("stop_hook_active"):
             return 0
-        last_user, edited = None, False
+        last_user, edited, n_tools, skill_saved = None, False, 0, False
         with open(data["transcript_path"], encoding="utf-8") as f:
             for line in f:
                 try:
@@ -527,22 +532,27 @@ def stop_hook(stdin=None) -> int:
                 if e.get("type") == "user":
                     if isinstance(content, str) or any(
                             isinstance(c, dict) and c.get("type") == "text" for c in content or []):
-                        last_user, edited = e.get("uuid") or line[:64], False
+                        last_user, edited, n_tools, skill_saved = e.get("uuid") or line[:64], False, 0, False
                 elif e.get("type") == "assistant" and isinstance(content, list):
-                    edited |= any(c.get("type") == "tool_use" and c.get("name") in EDIT_TOOLS
+                    uses = [c for c in content if isinstance(c, dict) and c.get("type") == "tool_use"]
+                    n_tools += len(uses)
+                    skill_saved |= any(str(c.get("name", "")).endswith("skill_manage") for c in uses)
+                    edited |= any(c.get("name") in EDIT_TOOLS
                                   and not _own_memory(str((c.get("input") or {}).get("file_path") or ""))
-                                  for c in content if isinstance(c, dict))
-        if not edited:
-            return 0
-        reason = STOP_REASON
+                                  for c in uses)
         from .mcp import checks
-        from .mcp.state import project_root
-        root = project_root(data.get("cwd") or None)
-        if not checks.disabled("run_checks") and checks.gated(root) and checks.fingerprint(root):
-            stale, why = checks.unchecked_changes(root)
-            if not stale:
-                return 0
-            reason = GATE_REASON.format(why=why)
+        reason = ""
+        if edited:
+            reason = STOP_REASON
+            from .mcp.state import project_root
+            root = project_root(data.get("cwd") or None)
+            if not checks.disabled("run_checks") and checks.gated(root) and checks.fingerprint(root):
+                stale, why = checks.unchecked_changes(root)
+                reason = GATE_REASON.format(why=why) if stale else ""
+        if not checks.disabled("skill_nudge") and n_tools >= NUDGE_TOOLS and not skill_saved:
+            reason = (reason + " " + NUDGE_REASON).strip()
+        if not reason:
+            return 0
         hh = I.harness_home(Path.home())
         marker = hh / "state" / f"stop-{data.get('session_id', 'x')}"
         if marker.is_file() and marker.read_text() == str(last_user):

@@ -15,7 +15,10 @@ few proven skills, so you get:
 - **memory that lasts:** preferences, facts and work in progress survive new sessions and
   context compaction, and are shared across tools on the same machine;
 - **self-learning:** after a real failure or a correction, the agent writes a short lesson and
-  looks it up the next time a similar task comes along;
+  looks it up the next time a similar task comes along; a procedure it had to work out is saved as
+  a skill, so the next session starts from the working path;
+- **past conversations, searchable:** "what did we decide last week?" is answered from your own
+  local Claude Code and Codex transcripts, with secrets masked;
 - **a safety net:** a guard blocks catastrophic commands (deleting your home folder, wiping
   disks, `sudo`, piping unknown scripts into a shell, force-pushing to `main`, reading SSH keys).
 
@@ -81,8 +84,9 @@ one copy.
   within token budgets, stay safe.
 - **Memory and knowledge tools** (a small local MCP server named `harness`): `kb_search` /
   `kb_get` for partial retrieval from your documents, `mem_add` / `mem_search` for facts and
-  preferences, `lesson_add` / `lesson_search` for self-learning, and task state that survives
-  compaction.
+  preferences, `lesson_add` / `lesson_search` for self-learning, `skill_manage` for procedures
+  learned from experience (`~/.agents/skills/learned/`), `session_search` over your past
+  conversations, and task state that survives compaction.
   A wrapper that installs the harness for an organisation can leave one-line notices in
   `~/.agent-harness/notices.json` (`{"notices": ["..."]}`, local, never fetched): the first one
   joins the server's instructions in the first session of the day, so the assistant mentions it once.

@@ -66,6 +66,8 @@ budget.
 | `mem_forget` | `id: str` | ok |
 | `lesson_add` | `mistake: str, fix: str, trigger: str` | id. Self-learning: recorded after a failure or correction |
 | `lesson_search` | `query: str, k: int=3` | the lessons relevant to the task at hand |
+| `session_search` | `query: str, k: int=5, session: str=""` | dated excerpts (<=300 chars) of the user's own past Claude Code / Codex messages; FTS5 index in `index.sqlite`, incremental by byte offset, redacted before storage, 64 MB cap (oldest dropped) |
+| `skill_manage` | `action: create|update|list|view|archive, name, description, body, old, new` | learned procedures in `~/.agents/skills/learned/<name>/SKILL.md` (agentskills format; sections When to Use / Procedure / Pitfalls / Verification; near-duplicates refused; body <= 12,000 chars; 40 active, least used archived to `HARNESS_HOME/skills-archive/`) |
 | `run_checks` | `cmd: str="", timeout: int=300` | OFF by default (`HARNESS_ENABLE=run_checks`): the project's checks run: exit code + only the failures and summary (<= 2 KB); recorded for the Stop gate |
 
 Caps (anti-bloat): memory 500 items/scope, lessons 200; beyond that the least-used, oldest are archived
