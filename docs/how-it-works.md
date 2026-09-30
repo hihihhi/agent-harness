@@ -93,8 +93,8 @@ returns a few dated excerpts with the session id and project; `session=<id>` nar
 
 ## Skills learned from experience: skill_manage
 
-When an agent works out a multi-step procedure worth repeating, finds the working path after errors,
-or is corrected on how to do something, it saves the procedure with `skill_manage create` as
+When a task took an agent several tool calls to find the working method (a data query, a command
+sequence, a fix), or the user corrected how to do it, the agent saves the method with `skill_manage create` as
 `~/.agents/skills/learned/<name>/SKILL.md` (the agentskills.io format: `name`, `description`, then
 `## When to Use`, `## Procedure`, `## Pitfalls`, `## Verification`). The next session, in any tool,
 starts from the working path.
@@ -138,7 +138,7 @@ The rules ask for good behaviour; the harness enforces a floor where the tool al
   `HARNESS_ENABLE=run_checks,check_guard` turns them on (the check guard is installed, inert).
 - **Arms for evaluation, off by default**: `memory_snapshot` puts the saved facts (most used first,
   2,200 characters, as Hermes Agent's MEMORY.md) into the MCP server's instructions once per session,
-  instead of recalling only what is relevant; `skill_nudge` reminds the agent once, after a turn of 15 or
+  instead of recalling only what is relevant; `skill_nudge` reminds the agent once, after a turn of 10 or
   more tool calls with no skill saved, to save what it worked out. `HARNESS_ENABLE=memory_snapshot,skill_nudge`
   turns them on.
 - **Memory recall** (Claude Code): relevant memories are attached to each prompt, within a strict
