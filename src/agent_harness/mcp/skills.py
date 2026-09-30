@@ -3,7 +3,7 @@ so the next session, in any tool, starts from the working path instead of redisc
 
     ~/.agents/skills/learned/<name>/SKILL.md     agentskills.io format; Codex, Gemini CLI, Cursor and Copilot
                                                  list it natively (Codex finds nested folders: probed 2026-09-30)
-    <HARNESS_HOME>/skills-usage.json             {name: {uses, last}}: views and updates
+    <HARNESS_HOME>/skills-usage.json             {name: {uses, last}}: views and updates through this tool
     <HARNESS_HOME>/skills-archive/<name>-<time>/ archived skills (the cap, or skill_manage archive): never deleted
 
 Claude Code does not read ~/.agents/skills, and a native listing costs every request; so for Claude the
