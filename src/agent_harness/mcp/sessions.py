@@ -185,7 +185,7 @@ class Sessions:
             ts = _epoch(e.get("timestamp"))
             for role, text in it:
                 started = started or ts
-                msgs.append((key, ts or started, role, redact(text[:MSG_CHARS])))
+                msgs.append((key, ts or started, role, redact(text)[:MSG_CHARS]))   # cut after: a cut secret no longer matches
         for m in msgs:
             cur = self.con.execute("INSERT INTO sess_msgs(path, ts, role, text) VALUES (?,?,?,?)", m)
             if self.fts:
@@ -214,8 +214,15 @@ class Sessions:
                 pending += 1
                 continue
             try:
+                self.con.commit()
+                self.con.execute("BEGIN IMMEDIATE")   # two sessions' servers share the index: one reader per file
+                row = self.con.execute("SELECT * FROM sess_files WHERE path=?", (key,)).fetchone()
+                if row and row["size"] == st.st_size and row["mtime"] == st.st_mtime:
+                    self.con.commit()
+                    continue
                 self._read(tool, path, st, row)
             except OSError:
+                self.con.rollback()
                 continue
             self.con.commit()
         for key in set(known) - seen:     # transcript deleted or moved away: forget it
@@ -257,7 +264,7 @@ class Sessions:
             where += " AND (f.session=? OR f.session LIKE ?)"
             params += [session, session + "%"]
         if before is not None:
-            where += " AND f.started < ?"
+            where += " AND m.ts < ?"      # message time: a resumed old transcript's new messages are the asker's too
             params.append(before)
         if self.fts:
             sql = ("SELECT m.rowid, m.ts, m.role, m.text, f.tool, f.session, f.project FROM sess_fts "

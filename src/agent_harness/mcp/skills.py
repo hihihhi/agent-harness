@@ -52,7 +52,11 @@ def _front(text: str) -> Dict[str, str]:
     for line in (m.group(1).splitlines() if m else []):
         k, sep, v = line.partition(":")
         if sep and not line.startswith((" ", "\t")):
-            out[k.strip()] = v.strip().strip('"')
+            v = v.strip()
+            try:          # written as a JSON string (a valid YAML double-quoted scalar): "Use when: x" stays one value
+                out[k.strip()] = json.loads(v) if v.startswith('"') else v
+            except ValueError:
+                out[k.strip()] = v.strip('"')
         elif sep and line.strip().startswith("version"):
             out["version"] = v.strip().strip('"')
     return out
@@ -126,14 +130,11 @@ class Skills:
         tmp.write_text(json.dumps(u, indent=1, sort_keys=True) + "\n", encoding="utf-8")
         os.replace(str(tmp), str(self.usage_file))
 
-    def _last_used(self, name: str, f: Path, u: dict) -> float:
-        """The later of the recorded use and the file's access time: Codex and the others read SKILL.md
-        natively, without this tool, and only the access time shows it."""
-        try:
-            at = f.stat().st_atime
-        except OSError:
-            at = 0.0
-        return max(float((u.get(name) or {}).get("last", 0)), at)
+    @staticmethod
+    def _last_used(name: str, u: dict) -> float:
+        """The recorded use only. A file's access time cannot tell a native read (Codex) from the harness's own
+        reads (recall, dedupe, list read every learned SKILL.md), so it is not used."""
+        return float((u.get(name) or {}).get("last", 0))
 
     # ------------------------------------------------------------ checks
     @staticmethod
@@ -176,7 +177,8 @@ class Skills:
     def _render(self, name: str, description: str, body: str, version: int) -> str:
         desc = " ".join(description.split())
         return ("---\nname: %s\ndescription: %s\nmetadata:\n  origin: learned\n  version: \"%d\"\n"
-                "  updated: \"%s\"\n---\n\n%s\n" % (name, desc, version, time.strftime("%Y-%m-%d"),
+                "  updated: \"%s\"\n---\n\n%s\n" % (name, json.dumps(desc, ensure_ascii=False), version,
+                                                     time.strftime("%Y-%m-%d"),
                                                      body.strip()))
 
     def _write(self, name: str, text: str) -> Path:
@@ -188,10 +190,16 @@ class Skills:
         os.replace(str(tmp), str(f))
         return f
 
-    def create(self, name: str, description: str, body: str) -> dict:
+    @staticmethod
+    def _name(name: str) -> str:
+        """Every write builds a path from the name: only [a-z0-9-] reaches it (no ../, no absolute path)."""
         name = (name or "").strip()
         if not NAME_RE.match(name) or len(name) > 64:
             raise ValueError("name must be lowercase letters, digits and hyphens (<= 64), e.g. count-sz-fills")
+        return name
+
+    def create(self, name: str, description: str, body: str) -> dict:
+        name = self._name(name)
         description, body = redact(description or ""), redact(body or "")
         errors, warnings = self.lint(description, body)
         if errors:
@@ -211,6 +219,7 @@ class Skills:
 
     def update(self, name: str, description: str = "", body: str = "", old: str = "", new: str = "") -> dict:
         """Replace the description and/or the body, or replace one exact passage (old -> new) in the body."""
+        name = self._name(name)
         f = self.learned / name / "SKILL.md"
         if not f.is_file():
             raise ValueError("no learned skill %r (only learned skills can be updated; see skill_manage list)" % name)
@@ -220,7 +229,7 @@ class Skills:
         if old:
             if cur_body.count(old) != 1:
                 raise ValueError("old text must occur exactly once in the body (found %d)" % cur_body.count(old))
-            cur_body = cur_body.replace(old, redact(new))
+            cur_body = redact(cur_body.replace(old, new))   # whole body: a name=value split across old/new
         elif body:
             cur_body = redact(body)
         elif not description:
@@ -264,6 +273,7 @@ class Skills:
         return out
 
     def archive(self, name: str, reason: str = "asked") -> dict:
+        name = self._name(name)
         src = self.learned / name
         if not (src / "SKILL.md").is_file():
             raise ValueError("no learned skill %r" % name)
@@ -283,7 +293,7 @@ class Skills:
         if over <= 0:
             return []
         u = self._usage()
-        learned.sort(key=lambda x: (int((u.get(x[0]) or {}).get("uses", 0)), self._last_used(x[0], x[1], u)))
+        learned.sort(key=lambda x: (int((u.get(x[0]) or {}).get("uses", 0)), self._last_used(x[0], u), x[0]))
         out = []
         for n, _ in learned[:over]:
             self.archive(n, reason="cap")
