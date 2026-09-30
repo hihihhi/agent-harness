@@ -140,7 +140,10 @@ The rules ask for good behaviour; the harness enforces a floor where the tool al
   2,200 characters, as Hermes Agent's MEMORY.md) into the MCP server's instructions once per session,
   instead of recalling only what is relevant; `skill_nudge` reminds the agent once, after a turn of 10 or
   more tool calls with no skill saved, to save what it worked out. `HARNESS_ENABLE=memory_snapshot,skill_nudge`
-  turns them on.
+  turns them on. In the v0.2 eval neither showed a gain: the snapshot answered 10/10 like relevance-only
+  recall at the same tokens, and the nudge made Claude save skills but its repeat runs were 2/3 correct at
+  1.42x tokens. `session_search` and `skill_manage` ship on: past-conversation recall went from 1/6 to 6/6,
+  and Codex saved and reused a skill in 3/3 repeated procedures; Claude saved none unprompted.
 - **Memory recall** (Claude Code): relevant memories are attached to each prompt, within a strict
   time limit, so the agent does not need to search for them.
 
