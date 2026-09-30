@@ -153,10 +153,10 @@ TOOLS = [
      "inputSchema": _s(query={"type": "string", "_req": True}, k={"type": "integer", "default": 5},
                        session={"type": "string", "description": "only this session id (prefix)"})},
     {"name": "skill_manage",
-     "description": "Procedures learned from experience. create one after you worked out a multi-step procedure "
-                    "worth repeating, found the working path after errors, or were corrected on how to do it; "
-                    "body sections: ## When to Use, ## Procedure, ## Pitfalls, ## Verification. update improves "
-                    "one (body, or old -> new); list, view, archive.",
+     "description": "Methods learned from experience. create one when a task took several tool calls to find "
+                    "the working method, or the user corrected how to do it; body sections: ## When to Use, "
+                    "## Procedure, ## Pitfalls, ## Verification. update improves one (body, or old -> new); list, "
+                    "view, archive.",
      "inputSchema": _s(action={"type": "string", "enum": ["create", "update", "list", "view", "archive"],
                                "_req": True},
                        name={"type": "string"}, description={"type": "string"}, body={"type": "string"},

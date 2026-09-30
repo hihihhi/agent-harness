@@ -33,8 +33,9 @@ tool only when nothing there fits. Never read a whole document when a section wi
   decided in an earlier conversation, `session_search`. Empty means none.
 - Told to remember something, or a durable preference: `mem_add`, one short fact. Never secrets
   or personal data. After a check failed then passed, or a correction from the user: `lesson_add`.
-- Worked out a multi-step procedure worth repeating, found the working path after errors, or were
-  corrected on how to do it: `skill_manage` create (or update the matching skill).
+- A task took several tool calls to find the working method (a data query, a command sequence, a
+  fix), or the user corrected how to do it: before answering, save the method with `skill_manage`
+  create (or update the matching skill), so next time it is one step.
 - Unfinished multi-step work: `state_save` (goal, stage, decisions, next); after a compaction,
   `state_load`. One-shot questions need neither.
 

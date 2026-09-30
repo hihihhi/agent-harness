@@ -491,7 +491,7 @@ GATE_REASON = ("Files changed since the last passing run_checks ({why}): call ru
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 # Arm skill_nudge (HARNESS_ENABLE=skill_nudge; off by default until the eval shows it helps): after a long turn
 # with no skill saved, one reminder, as Hermes' post-session review but inside the session.
-NUDGE_TOOLS = 15
+NUDGE_TOOLS = 10   # the calibration's first sessions of repeat questions took 11-16 tool calls
 NUDGE_REASON = ("Long task: if you worked out a procedure worth repeating, found the working path after errors, "
                 "or were corrected, save it now with skill_manage (one call); otherwise just finish.")
 
