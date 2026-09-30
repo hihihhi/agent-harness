@@ -105,8 +105,9 @@ starts from the working path.
 - A near-duplicate of any installed or learned skill is refused with the name to update instead;
   `update` takes a new body or replaces one exact passage (`old` -> `new`) and bumps the version.
 - Limits: a body over 12,000 characters is refused (warning over 6,000); at most 40 learned skills are
-  active, and beyond that the least used (views, updates, and file access by other tools) move to
-  `~/.agent-harness/skills-archive/`, never deleted. Secrets are masked before writing.
+  active, and beyond that the least used (views and updates through `skill_manage`; a tool reading the
+  file natively is not counted) move to `~/.agent-harness/skills-archive/`, never deleted. Secrets are
+  masked before writing.
 
 ## Task state: surviving compaction
 
