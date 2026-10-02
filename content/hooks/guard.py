@@ -14,6 +14,12 @@ not a determined attacker. Anything it cannot parse as a hook payload is blocked
 
 Extra trusted installer hosts for `curl ... | sh`: env HARNESS_GUARD_TRUSTED_HOSTS
 (comma-separated host names).
+
+Protected data: every absolute path listed in HARNESS_GUARD_PROTECTED_FILE (default
+/etc/agent-harness/protected-paths, one per line, # comments) is a tree nothing may delete, move away,
+truncate or overwrite: rm/rmdir/unlink/shred/truncate/mv on it, find -delete in it, rsync --delete into it,
+dd of= into it, a > redirect onto a file in it, zfs destroy/rollback/rename/set, and an interpreter whose
+code names it together with a delete or write call. Reading it is untouched. No file: no protected paths.
 """
 import json
 import os
@@ -63,6 +69,43 @@ FORK_BOMB = [
 SUBST_FEEDS_SHELL = re.compile(
     r"(\b(" + "|".join(sorted(SHELLS | INTERPRETERS | {"eval", "source"})) + r")\b|(^|[;&|]\s*)\.\s)"
     r"[^;&|]*(<\(|\$\(|`)\s*(curl|wget)\b")
+
+
+PROTECTED_FILE = "/etc/agent-harness/protected-paths"
+DESTROYERS = {"rm", "rmdir", "unlink", "shred", "truncate", "mv"}
+PY_DESTROY = re.compile(r"rmtree|remove|unlink|rmdir|truncate|rename|replace|os\.system|subprocess|"
+                        r"write_bytes|write_text|open\([^)]*['\"][wa+]")
+
+
+def protected_roots():
+    path = os.environ.get("HARNESS_GUARD_PROTECTED_FILE") or PROTECTED_FILE
+    try:
+        with open(path) as f:
+            lines = [ln.split("#", 1)[0].strip() for ln in f]
+    except OSError:
+        return []
+    return [os.path.normpath(ln) for ln in lines if ln.startswith("/")]
+
+
+_CWD = [None]   # the directory a `cd` earlier in the same command moved to (None: the hook's own cwd)
+
+
+def protected(p, roots):
+    """The protected root `p` lies in (or contains), or None. A relative path is taken from the cwd; a
+    path that starts with a variable or a substitution cannot be resolved here and counts if a root is
+    named anywhere in it."""
+    if not roots or not p or p.startswith("-"):
+        return None
+    if p.startswith(("$", "`")) or "$(" in p:
+        return next((r for r in roots if r in p), None)
+    base = _CWD[0] or os.getcwd()
+    if base == "?" and not p.startswith(("/", "~")):
+        return None                                   # after `cd $VAR`: a relative path cannot be resolved
+    t = os.path.normpath(os.path.join(base, os.path.expanduser(p)))
+    for r in roots:
+        if t == r or t.startswith(r + "/") or r.startswith(t.rstrip("/") + "/"):
+            return r
+    return None
 
 
 class Blocked(Exception):
@@ -282,6 +325,8 @@ def check_segment(name, args, redirs, depth):
     if name == "git":
         check_git(args)
 
+    check_protected(name, args, flags, ops, redirs)
+
     if name in SHELLS and "-c" in flags:
         i = args.index("-c")
         if i + 1 < len(args):
@@ -293,6 +338,53 @@ def check_segment(name, args, redirs, depth):
         if secret_path(tok, name):
             block("%s touches a credential file (%s); secrets never go into the agent's context"
                   % (name, tok))
+
+
+def check_protected(name, args, flags, ops, redirs):
+    roots = protected_roots()
+    if not roots:
+        return
+    if name in ("cd", "pushd"):
+        d = ops[0] if ops else "~"
+        if d.startswith(("$", "`")) or "$(" in d or d == "-":
+            _CWD[0] = "?"
+        elif _CWD[0] != "?" or d.startswith(("/", "~")):
+            _CWD[0] = os.path.normpath(os.path.join(_CWD[0] or os.getcwd(), os.path.expanduser(d)))
+        return
+    why = "is protected data: nothing may delete, move, truncate or overwrite it"
+    if name in DESTROYERS:
+        for op in ops:
+            r = protected(op, roots)
+            if r:
+                block("%s on %s: %s %s" % (name, op, r, why))
+    if name == "find" and ("-delete" in args or "-exec" in args or "-execdir" in args):
+        for a in args:
+            if a.startswith("-") or a in ("(", "!"):
+                break
+            r = protected(a, roots)
+            if r:
+                block("find -delete/-exec in %s: %s %s" % (a, r, why))
+    if name == "rsync" and any(a.startswith(("--delete", "--remove-source")) for a in args):
+        for op in ops:
+            r = protected(op.split(":", 1)[-1], roots)
+            if r:
+                block("rsync --delete with %s: %s %s" % (op, r, why))
+    if name == "dd":
+        for a in args:
+            r = protected(a[3:], roots) if a.startswith("of=") else None
+            if r:
+                block("dd onto %s: %s %s" % (a[3:], r, why))
+    if name == "zfs" and ops and ops[0] in ("destroy", "rollback", "rename", "set"):
+        block("zfs %s: datasets and snapshots are changed by the admin by hand" % ops[0])
+    if name in INTERPRETERS or re.match(r"^python3(\.\d+)?$", name):
+        text = " ".join(args)
+        hit = next((r for r in roots if r in text), None)
+        if hit and PY_DESTROY.search(text):
+            block("%s code that names %s and deletes or writes: %s %s" % (name, hit, hit, why))
+    for rd in redirs:
+        r = protected(rd, roots)
+        if r:
+            block("a redirect onto %s: %s %s" % (rd, r, why))
 
 
 def check_git(args):
@@ -399,6 +491,7 @@ def check(cmd, depth=0):
 
 def verdict(cmd):
     """Return None if allowed, else the reason."""
+    _CWD[0] = None
     try:
         check(cmd)
     except Blocked as e:
