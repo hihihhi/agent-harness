@@ -196,5 +196,82 @@ class TestHookProtocol(unittest.TestCase):
         self.assertEqual(run(["--check", "git push origin feature"]).returncode, 0)
 
 
+PROTECTED_BLOCKED = [
+    "rm -rf /local/Market/A-Stock",
+    "rm /local/Market/A-Stock/cleansed/trades/_log.jsonl",
+    "rm -r /local",                                   # a parent of a protected tree
+    "cd /local/Market && rm -rf A-Stock",
+    "rmdir /local/Market/Polymarket/table",
+    "unlink /local/Market/x.parquet",
+    "truncate -s0 /local/Market/A-Stock/x.parquet",
+    "shred -u /tank/raw/2026/x.7z",
+    "mv /local/Market/A-Stock /tmp/old",
+    "mv /tmp/new.parquet /local/Market/A-Stock/x.parquet",
+    "find /local/Market -name '*.parquet' -delete",
+    "find /tank/raw -exec rm {} +",
+    "rsync -a --delete /tmp/empty/ /local/Market/A-Stock/",
+    "dd if=/dev/zero of=/local/Market/x.parquet",
+    "echo > /local/Market/A-Stock/x.parquet",
+    "zfs destroy hddpool/local-market@auto-20261003T00",
+    "zfs rollback hddpool/local-market@auto-20261003T00",
+    "python3 -c \"import shutil; shutil.rmtree('/local/Market/Crypto-Tardis')\"",
+    "python3 -c \"import os; os.remove('/local/Market/A-Stock/x')\"",
+    "python -c \"open('/local/Market/x.parquet','w').write('')\"",
+    "rm -rf \"$D/local/Market\"",
+    "nice rm -rf /local/Market/A-Stock/cleansed",
+]
+PROTECTED_ALLOWED = [
+    "ls -la /local/Market/A-Stock",
+    "du -sh /local/Market/*",
+    "cat /local/Market/A-Stock/cleansed/trades/_log.jsonl | tail -3",
+    "python3 -c \"import pyarrow.parquet as pq; print(pq.read_metadata('/local/Market/x.parquet'))\"",
+    "cp /local/Market/A-Stock/x.parquet /tmp/x.parquet",
+    "rsync -a /local/Market/A-Stock/ /tmp/copy/",
+    "rm -rf /tmp/work /home/a/scratch/out",
+    "find /local/Market -name '*.parquet' | wc -l",
+    "zfs list -t snapshot",
+]
+
+
+class TestProtectedData(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        fd, self.f = tempfile.mkstemp()
+        with os.fdopen(fd, "w") as fh:
+            fh.write("# data trees\n/local/Market\n/tank/raw/\n")
+        self.old = os.environ.get("HARNESS_GUARD_PROTECTED_FILE")
+        os.environ["HARNESS_GUARD_PROTECTED_FILE"] = self.f
+
+    def tearDown(self):
+        os.unlink(self.f)
+        if self.old is None:
+            os.environ.pop("HARNESS_GUARD_PROTECTED_FILE", None)
+        else:
+            os.environ["HARNESS_GUARD_PROTECTED_FILE"] = self.old
+
+    def test_blocked(self):
+        for cmd in PROTECTED_BLOCKED:
+            with self.subTest(cmd=cmd):
+                self.assertIsNotNone(guard.verdict(cmd), "should block: %r" % cmd)
+
+    def test_allowed(self):
+        for cmd in PROTECTED_ALLOWED:
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(guard.verdict(cmd), "should allow: %r -> %s" % (cmd, guard.verdict(cmd)))
+
+    def test_control_without_the_file(self):
+        # the list is what protects: without it a deep data path is an ordinary path
+        os.environ["HARNESS_GUARD_PROTECTED_FILE"] = self.f + ".absent"
+        self.assertIsNone(guard.verdict("rm -rf /local/Market/A-Stock"))
+        self.assertIsNone(guard.verdict("truncate -s0 /local/Market/A-Stock/x.parquet"))
+
+    def test_hook_payload_blocks(self):
+        payload = {"tool_name": "Bash", "tool_input": {"command": "rm -rf /local/Market/A-Stock"}}
+        r = subprocess.run([sys.executable, str(GUARD)], input=json.dumps(payload), capture_output=True,
+                           text=True, env=dict(os.environ))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("protected data", r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
