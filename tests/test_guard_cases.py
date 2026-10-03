@@ -37,6 +37,11 @@ DANGEROUS = {
         "find / -name x -delete", "find ~ -delete", "find / -type f -exec rm -f {} \\;", "find ~/Desktop -delete",
         "find /Users -delete", "find /home/bo* -delete",
     ],
+    "a relative glob after cd into home or root (found by review, 2026-10-03)": [
+        "cd ~ && rm -rf *", "cd && rm -rf *", "cd $HOME && rm -rf *", "pushd ~ && rm -rf *", "cd / && rm -rf *",
+        "cd /Users && rm -rf *", "cd ~ && rm -rf .*", "builtin cd ~ && rm -rf *", "cd ~ && find . -delete",
+        "command -p rm -rf ~", "xargs rm -rf <<< ~", "cd ~/.. && rm -rf *", "cd ~ && cd .. && rm -rf *",
+    ],
     "shells and eval running a destructive command": [
         'bash -c "rm -rf /home/alice"', '/bin/sh -c "rm -rf $HOME"', "bash <<EOF\nrm -rf ~\nEOF",
     ],
@@ -65,6 +70,10 @@ DANGEROUS = {
 }
 
 SAFE = {
+    "cleanup after cd into a project (the cd-then-glob fix must not catch these)": [
+        "cd ~/code/app && rm -rf *", "cd ~/proj && rm -rf build", "cd ~/proj && find . -name '*.pyc' -delete",
+        "cd $BUILD_DIR && rm -rf *", "cd .. && rm -rf dist", "cd ~ && ls -la",
+    ],
     "ordinary cleanup inside a project": [
         "rm -f build/*.o", "rm -rf dist build", "rm package-lock.json", "rm -rf ./node_modules",
         "rm -rf /tmp/mytest", "rm -rf /tmp/session-1/scratchpad/x", "git rm -r old/", "npm rm -g some-pkg",
