@@ -22,7 +22,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 from .adapters.base import Ctx, FileChange
 
 PKG_DIR = Path(__file__).resolve().parent
-REPO_ROOT = PKG_DIR.parent.parent
+# A checkout keeps content/ beside src/; a wheel (pipx, uvx) ships it as agent_harness/content.
+REPO_ROOT = PKG_DIR.parent.parent if (PKG_DIR.parent.parent / "content").is_dir() else PKG_DIR
 STATE = "installed.json"
 IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store")
 

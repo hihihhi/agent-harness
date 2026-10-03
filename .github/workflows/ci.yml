@@ -27,3 +27,5 @@ jobs:
         run: |
           bash scripts/secret-scan.sh --self-test
           bash scripts/secret-scan.sh
+      - name: Demo (throwaway home)
+        run: bash scripts/demo.sh

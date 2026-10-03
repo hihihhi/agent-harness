@@ -1,4 +1,5 @@
 """Checks on the shipped content: size caps, skill frontmatter, and no private data (public repo)."""
+import ast
 import re
 import unittest
 from pathlib import Path
@@ -145,6 +146,18 @@ class TestNoPrivateData(unittest.TestCase):
                 self.assertIsNone(IPV4.search(text), "IP address in %s" % rel)
                 for host in URL_HOST.findall(text):
                     self.assertIsNone(PRIVATE_HOST.match(host), "private host %s in %s" % (host, rel))
+
+
+class TestPackaging(unittest.TestCase):
+    def test_the_wheel_ships_every_content_file(self):
+        # pipx/uvx install from a wheel, where content/ exists only if pyproject's package-data names it: a new
+        # hook or skill missing from those globs would install a harness without it
+        text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        globs = ast.literal_eval(re.search(r'^"agent_harness\.content" = (\[.*\])$', text, re.M).group(1))
+        shipped = {p for g in globs for p in CONTENT.glob(g) if p.is_file()}
+        every = {p for p in CONTENT.rglob("*") if p.is_file() and "__pycache__" not in p.parts and p.name != ".DS_Store"}
+        self.assertTrue(every)
+        self.assertEqual(sorted(str(p.relative_to(CONTENT)) for p in every - shipped), [])
 
 
 if __name__ == "__main__":

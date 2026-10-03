@@ -133,6 +133,52 @@ class Runs(unittest.TestCase):
         self.assertIn("--ephemeral", runner.command("codex", "A02", "q"))
         self.assertIn("--ignore-user-config", runner.command("codex", P, "q"))
 
+    def test_no_command_carries_an_option_the_cli_rejects(self):
+        for cond in (P, "A02", "P", "H"):
+            self.assertNotIn("--permission-prompts", runner.command("claude", cond, "q"))
+
+    def test_the_public_arms_differ_only_by_the_harness(self):
+        p, h = runner.command("claude", "P", "q"), runner.command("claude", "H", "q")
+        for c in (p, h):
+            self.assertNotIn("--safe-mode", c)
+            self.assertEqual(c[c.index("--setting-sources") + 1], "project")   # none of your user settings
+            self.assertIn("--strict-mcp-config", c)
+        self.assertEqual(p[p.index("--mcp-config") + 1], '{"mcpServers":{}}')
+        self.assertTrue(h[h.index("--mcp-config") + 1].startswith(str(runner.SANDBOX)))
+        self.assertTrue(h[h.index("--settings") + 1].startswith(str(runner.SANDBOX)))
+        self.assertTrue(h[h.index("--append-system-prompt-file") + 1].endswith("CLAUDE.md"))
+        self.assertIn("mcp__harness", h[h.index("--allowedTools") + 1].split())
+
+    def test_the_sandbox_install_stays_out_of_the_real_home(self):
+        with tempfile.TemporaryDirectory() as d:
+            sbx = Path(d) / "sbx"
+            with mock.patch.object(runner, "SANDBOX", sbx), mock.patch.dict(os.environ, {}), \
+                    mock.patch.object(runner, "HH", runner.HH), mock.patch.object(runner, "LEARNED", runner.LEARNED), \
+                    mock.patch.object(runner, "HARNESS_STATE", runner.HARNESS_STATE):
+                runner.use_sandbox()
+                self.assertEqual(os.environ["HARNESS_HOME"], str(sbx / ".agent-harness"))
+                self.assertTrue(str(runner.LEARNED).startswith(str(sbx)))
+                runner.sandbox_install()
+                server = json.loads((sbx / "eval-mcp.json").read_text())["mcpServers"]["harness"]
+                self.assertEqual(server["env"]["HOME"], str(sbx))
+                self.assertTrue(server["args"][0].startswith(str(sbx)))
+                settings = json.loads((sbx / ".claude" / "settings.json").read_text())
+                self.assertIn(str(sbx), settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"])
+                self.assertTrue((sbx / ".claude" / "CLAUDE.md").is_file())
+
+    def test_the_mirror_follows_the_real_transcripts_both_ways(self):
+        with tempfile.TemporaryDirectory() as d:
+            proj, sbx = Path(d) / "projects" / "-w", Path(d) / "sbx"
+            proj.mkdir(parents=True)
+            (proj / "s1.jsonl").write_text("{}\n")
+            with mock.patch.object(runner, "CLAUDE_PROJ", proj), mock.patch.object(runner, "SANDBOX", sbx):
+                runner.mirror_transcripts()
+                copy = sbx / ".claude" / "projects" / "-w"
+                self.assertTrue((copy / "s1.jsonl").is_file())
+                (proj / "s1.jsonl").unlink()                       # quarantined: gone from the copy too
+                runner.mirror_transcripts()
+                self.assertFalse((copy / "s1.jsonl").exists())
+
     def test_plain_runs_are_told_where_the_docs_are_and_harness_runs_are_not(self):
         with tempfile.TemporaryDirectory() as d:
             r = runner.Runner(d, QS)
@@ -218,6 +264,26 @@ class Runs(unittest.TestCase):
                 r.run("codex", "A02", fact, 1)
             self.assertEqual(["--ephemeral" in c for c in seen], [False, True, True])
 
+    def test_an_expired_login_stops_the_phase_after_one_run(self):
+        # measured 2026-10-03: with the CLI's login expired every run "succeeded" in 1 s with 0 tokens and was
+        # graded WRONG; the phase must stop instead of grading the rest
+        lines = "\n".join(json.dumps(e) for e in (
+            {"type": "result", "subtype": "success", "is_error": True, "num_turns": 1, "usage": {},
+             "result": "Failed to authenticate: OAuth session expired and could not be refreshed"},))
+        q = next(q for q in QS["questions"] if q["id"] == "F1")
+        with tempfile.TemporaryDirectory() as d:
+            r = runner.Runner(d, QS)
+
+            def fake(cmd, secs, stdout=None, **k):
+                stdout.write(lines.encode())
+                return mock.Mock(returncode=1)
+            with mock.patch.object(runner, "settle"), mock.patch.object(runner, "run_limited", side_effect=fake):
+                rec = r.run("claude", "P", q, 1)
+                self.assertTrue(rec["auth_failed"])
+                self.assertTrue(r.stopped())
+                with self.assertRaises(SystemExit):
+                    r.run("claude", "H", q, 1)
+
     def test_parse_claude_reads_tokens_tools_and_the_answer(self):
         lines = [json.dumps(e) for e in (
             {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "docs/jobs.md"}}]}},
@@ -270,6 +336,21 @@ class Plan(unittest.TestCase):
         conds = {(c.args[0], c.args[1]) for c in r.fixed.call_args_list}
         self.assertEqual(conds, {("claude", "A02"), ("claude", "A02s"), ("codex", "A02"), ("codex", "A02s")})
         self.assertEqual(r.fixed.call_count, 12)               # 4 conditions x 3 repetitions
+
+    def test_the_public_phase_runs_both_arms_on_the_kinds_asked_for(self):
+        runs, pairs = [], []
+        r = mock.Mock(done=set())
+        r.run.side_effect = lambda tool, cond, q, rep, **k: runs.append((tool, cond, q["id"]))
+        kinds = ["fact", "procedure", "multihop", "undocumented", "memory", "recall"]
+        with mock.patch.object(runner, "pair", lambda r, tool, cond, q, tok: pairs.append((tool, cond, q["id"], tok))):
+            runner.public(r, QS, kinds)
+        self.assertEqual(len(runs), 2 * 12)                     # 12 retrieval questions, both arms
+        self.assertEqual(sorted(q for _, c, q, _ in pairs if c == "H"), ["M1", "M2", "R1", "R2", "R3"])
+        self.assertEqual(sorted(q for _, c, q, _ in pairs if c == "P"), ["M1", "M2", "R1", "R2", "R3"])
+        self.assertEqual({t for t, *_ in runs + pairs}, {"claude"})
+        self.assertEqual({tok for _, c, _, tok in pairs if c == "H"}, {QS["v02_tokens"]["claude:H"]})
+        self.assertEqual(runs[0][1], "P")
+        self.assertEqual(runs[2][1], "H")                       # who goes first alternates
 
     def test_an_unknown_installed_version_stops_the_eval(self):
         with self.assertRaises(SystemExit):

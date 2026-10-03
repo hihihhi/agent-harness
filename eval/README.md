@@ -12,6 +12,7 @@ the fixed context each request carries, recall of an earlier session, and reuse 
 | `questions/synthetic.json` | the public question set: 20 questions with graders and answer keys (SYNTHETIC) |
 | `corpus/` | the SYNTHETIC documentation (`docs/`) and data (`data/orders.csv`) the questions are about |
 | `results/historical.md` | the numbers of the original eval, which used a private corpus |
+| `results/public-synthetic-2026-10-03-*.json` | the record of the one public-set attempt, which never reached the model |
 | `test_eval.py` | tests of the instrument; no model is called |
 
 The question set is a parameter (`--questions FILE`): it carries the questions, their graders, the
@@ -21,7 +22,8 @@ itself knows nothing about the corpus. `questions/synthetic.json` has 12 retriev
 
 ## Run it
 
-Nothing here has been run on the synthetic set yet. A full pass spends your Claude Code and Codex usage
+Nothing here has produced results on the synthetic set yet: the one attempt (2026-10-03, the `public` phase
+below) failed at the CLI's login before any model call; its record is in `results/`. A full pass spends your Claude Code and Codex usage
 (218 runs for the two passes below, counted from the plan; the original eval on the private corpus was 254), so it is not part of `scripts/check.sh`. The free part:
 
 ```sh
@@ -51,6 +53,21 @@ The coding arms are separate (`python3 eval/runner.py arms --dir $D`, Claude onl
 prints their table and the keep decision when the results contain them. Add `--questions FILE` to every
 command to use another question set. A rate-limit error writes `$D/STOP` and every phase stops at its next
 run; a phase can be restarted, and finished runs are skipped.
+
+### The public phase (Claude only, no installed harness)
+
+```sh
+python3 eval/runner.py public --dir eval/out/public --kinds fact,procedure,multihop,undocumented,memory,recall
+python3 eval/report.py eval/out/public/results.jsonl
+python3 eval/runner.py public-cleanup --dir eval/out/public   # quarantine, remove the eval's transcripts and the sandbox
+```
+
+Two arms, 44 runs with the `--kinds` above (all kinds: 56). `P` is Claude with `--setting-sources project` and
+no MCP servers, so none of your own settings, plugins or `CLAUDE.md` load. `H` is `P` plus this tree's harness,
+installed with `--home` into a throwaway folder (`EVAL_SANDBOX`, default under the system temp folder) and loaded
+with `--settings` (the hooks), `--mcp-config` and `--append-system-prompt-file` (the rules); skills and slash
+prompts are not loaded. Its MCP server runs with the sandbox as `HOME`, so `session_search` reads only a copy of the
+eval's own transcripts, refreshed before every `H` run. Your installed harness and its store are not touched.
 
 ## Conditions
 

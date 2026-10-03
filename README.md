@@ -2,7 +2,52 @@
 
 **One standard-library install that gives seven AI coding tools the same rules, memory, retrieval, lessons and command guard.**
 
-Implemented with AI coding agents under Oscar's design and review. The learning loop (`session_search`,
+```console
+$ harness --home $DEMO_HOME install --dry-run --tools claude-code
+Claude Code:
+  write $DEMO_HOME/.claude/CLAUDE.md - agent rules (replaces the file)
+  merge into $DEMO_HOME/.claude/settings.json - adds a dangerous-command guard and a run-the-checks reminder; your hooks stay
+  merge into $DEMO_HOME/.claude.json - registers the harness MCP server (harness)
+  ...
+Dry run: nothing was written.
+
+$ harness --home $DEMO_HOME install --yes --tools claude-code && harness --home $DEMO_HOME doctor
+[ok] python 3.9.6
+[ok] SQLite FTS5 available
+[ok] claude-code: $DEMO_HOME/.claude/CLAUDE.md
+  ...
+[ok] MCP server answers tools/list within 5 s (14 tools)
+[ok] disk footprint 0.4 MB (cap 20 MB)
+
+$ python3 content/hooks/guard.py --check "rm -rf ~"
+agent-harness guard blocked this: rm -r on ~ (the home directory). If it is really intended, ask the human to run it themselves.
+exit 2
+
+$ python3 content/hooks/guard.py --check "git status && pytest -q"
+exit 0
+```
+
+Output of `bash scripts/demo.sh` (2026-10-03, macOS, Python 3.9) with the per-file lines cut to `...`. It installs
+into a throwaway home, printed as `$DEMO_HOME`, never into yours.
+
+**Quick start** (Python 3.9+, nothing else; `--dry-run` writes nothing):
+
+```sh
+git clone https://github.com/hihihhi/agent-harness.git && cd agent-harness
+python3 bin/harness install --dry-run     # every file it would change, for each tool you have
+bash scripts/demo.sh                      # install, doctor and the guard, in a throwaway home
+```
+
+| evidence | result | qualifier and source |
+|---|---|---|
+| Recall of an earlier session | **0/3 plain, 3/3 harness** (Claude and Codex) | historical A/B on a **private corpus**, one run per question, n=3: [eval/results/historical.md](eval/results/historical.md) |
+| Command guard corpus | **86/86 dangerous commands blocked, 98/98 safe ones pass**; 21 former bypasses fixed, 16 known gaps pinned | [tests/test_guard_cases.py](tests/test_guard_cases.py), `python3 -m pytest -q tests/test_guard_cases.py` |
+| Tests | **267 passed**, 2 skipped, 16 expected failures (the pinned guard gaps) | `python3 -m pytest -q tests eval` |
+
+Not everything gained: Claude with the harness used 1.24x plain's tokens in the v0.1.1 eval, two of the seven tools
+were measured, and the public synthetic eval has no results yet ([Results](#results), [Limits](#limits)).
+
+Provenance: implemented with AI coding agents under Oscar's design and review. The learning loop (`session_search`,
 `skill_manage`, the memory snapshot arm) follows the design of Hermes Agent; skills use the agentskills.io
 format; the tools talk to the harness over the Model Context Protocol.
 
@@ -86,11 +131,25 @@ without the harness; the Codex plain column still carries the rules text.
 
 ### The same eval, on a public synthetic set
 
-No results yet. [eval/](eval/) holds the runner, the report generator and a public SYNTHETIC question set
-(20 questions over a made-up documentation corpus, same structure: retrieval, a cross-session recall probe,
-repeated procedures, memory, coding tasks). Running it spends Claude Code and Codex usage, so it was not run
-here; the commands are in [eval/README.md](eval/README.md), and `python3 eval/runner.py grade-selftest` and
-`python3 -m pytest -q eval` check the instrument for free.
+**No results yet.** [eval/](eval/) holds the runner, the report generator and a public SYNTHETIC question set
+(20 questions over a made-up documentation corpus: 12 retrieval, 2 memory, 3 recall, 3 repeated procedures).
+Its `public` phase needs no installed harness: it compares plain Claude (`P`) with Claude plus this tree's harness
+installed into a throwaway home (`H`), both without your own settings, plugins or MCP servers.
+
+One run was attempted on 2026-10-03 (Claude Code 2.1.224, model reported by the CLI: `claude-opus-5[1m]`),
+planned as 44 runs: both arms on 17 questions, the 3 repeated-procedure questions left out to stay within a
+45-call budget. Every run failed before reaching the model ("Failed to authenticate: OAuth session expired");
+it was stopped after 6 runs, 0 tokens, and not retried. The record is
+[eval/results/public-synthetic-2026-10-03-claude-opus-5-1m-not-run.json](eval/results/public-synthetic-2026-10-03-claude-opus-5-1m-not-run.json).
+The attempt did show the `H` arm wired correctly (the harness MCP server connected with its 14 tools, the hooks
+ran), and the runner now stops at the first run that cannot authenticate. To run it:
+
+```sh
+python3 eval/runner.py public --dir eval/out/public --kinds fact,procedure,multihop,undocumented,memory,recall
+python3 eval/report.py eval/out/public/results.jsonl && python3 eval/runner.py public-cleanup --dir eval/out/public
+```
+
+`python3 eval/runner.py grade-selftest` and `python3 -m pytest -q eval` check the instrument for free.
 
 ### The guard against a wider corpus
 
@@ -106,7 +165,7 @@ The other 81 are recorded, not fixed:
 |---|---|---|
 | the author's own machine policy: network and VPN control, macOS system tools, the author's own agent settings | 39 | out of scope for a catastrophic-command guard |
 | the harness is stricter (all `sudo`, SSH key flags, `find ..`, text that looks like a fork bomb) | 14 | by design; the fork-bomb text in a quoted note is a known false positive |
-| open gaps: targets computed by `$(...)`, inline code in another interpreter, login-script and cron persistence, `find \| xargs` | 18 | pinned as expected failures in the tests; the guard is a seat belt, not a sandbox |
+| open gaps: targets computed by `$(...)`, inline code in another interpreter, login-script and cron persistence, `find \| xargs` | 18 | 16 representative commands pinned as expected failures in the tests; the guard is a seat belt, not a sandbox |
 | the private suite asks about single files and project paths the harness allows (`rm ~/Desktop/note.txt`) | 9 | by design |
 | an empty `{}` payload | 1 | cannot be told from a non-shell tool |
 
@@ -126,9 +185,10 @@ git clone https://github.com/hihihhi/agent-harness.git && python3 agent-harness/
 install: the installer asks before touching anything, and every file it changes is backed up first. Then
 restart your AI tool and run `python3 agent-harness/bin/harness doctor`.
 
-Check the repository (tests, secret scan, and a demo that installs into a throwaway home, never yours):
+Check the repository (tests, secret scan, and `scripts/demo.sh`, which installs into a throwaway home, never yours):
 
 ```sh
+bash scripts/demo.sh           # standard library only, about a second; prints DEMO: PASS
 bash scripts/check.sh          # needs pytest; prints CHECK: PASS and exits 0 only if everything passed
 python3 content/hooks/guard.py --check "rm -rf ~"     # the guard by hand: exits 2 with the reason
 ```
@@ -145,12 +205,13 @@ python3 content/hooks/guard.py --check "rm -rf ~"     # the guard by hand: exits
 | `harness update` | refresh the rules and skills; memory and lessons are kept |
 | `harness uninstall` | put everything back as it was |
 
-(`harness` is `python3 agent-harness/bin/harness`.) To undo: `harness uninstall` restores every file the
+(`harness` is `python3 agent-harness/bin/harness`, or the `harness` command after `pipx install .` or
+`uvx --from . harness`.) To undo: `harness uninstall` restores every file the
 installer changed from its backup and removes what it added. Your memory and lessons stay in
 `~/.agent-harness`; delete that folder yourself if you want them gone too.
 
 To run the A/B eval yourself, see [eval/README.md](eval/README.md). The continuous-integration workflow
-(`.github/workflows/ci.yml`) runs the tests and `scripts/secret-scan.sh`; it has not run on GitHub yet.
+(`.github/workflows/ci.yml`) runs the tests, `scripts/secret-scan.sh` and the demo; it has not run on GitHub yet.
 
 ## Architecture
 
@@ -195,6 +256,25 @@ flowchart LR
 How each part works, in more depth: [docs/how-it-works.md](docs/how-it-works.md); the build contract:
 [CONTRACT.md](CONTRACT.md).
 
+### Design decisions and trade-offs
+
+- **Standard library only.** The harness has to install wherever an AI tool runs, including a remote Linux
+  server reached over SSH where `pip` may be unavailable or unwanted, so it needs only `python3` and stays
+  under 20 MB. The cost: search uses SQLite FTS5 when the Python build has it and a slower pure-Python BM25
+  otherwise; frontmatter, JSON merges and Codex's `config.toml` tables are edited by small hand-written code
+  rather than a YAML or TOML library.
+- **A guard that fails closed.** A hook payload the guard cannot parse (not JSON, or a command that is not a
+  string) is blocked, not waved through: an agent that hits a false block can ask the
+  human, while a missed `rm -rf ~` cannot be undone. The cost is false positives (all `sudo`, fork-bomb text
+  inside a quoted note), and it is still a seat belt, not a sandbox: 16 known bypasses are pinned in the tests.
+- **One rules file for seven tools.** `content/AGENTS.md` is the only rulebook and each adapter translates it to
+  its tool's format, so the tools cannot drift apart and a fix lands everywhere at once. Because the rules are
+  paid for in every request, they are capped under 120 lines; anything longer lives in a skill or the knowledge
+  base. The cost is a lowest common denominator: tool-specific features go through the adapters, not the rules.
+- **Measured, and not adopted.** The keep rule was written before the eval. Four candidates failed it and ship
+  off by default: the `memory_snapshot` and `skill_nudge` arms showed no gain, and the `run_checks` and
+  `check_guard` arms could not show one because the control never failed (Results).
+
 ### Supported tools
 
 Each tool is set up in its own app and, where it runs inside VS Code, there too. It works the same on a
@@ -227,8 +307,8 @@ Optional plugins are installed only by `harness warmup`, which shows their size 
 
 ## Limits
 
-- **The results are from a private corpus** and cannot be reproduced from this repository; the public
-  synthetic set has not been run yet, so it has no results.
+- **The results are from a private corpus** and cannot be reproduced from this repository. The public
+  synthetic set has no results: the one attempt (2026-10-03) failed at the CLI's login before any model call.
 - **Small samples.** One run per question and condition in the v0.2 pass; recall and repeated procedures are
   3 questions each. A difference of one or two answers is inside the noise, so the steps from 17 to 18 to 19
   of 20 should be read that way.
@@ -241,42 +321,44 @@ Optional plugins are installed only by `harness warmup`, which shows their size 
 - **The check arms are off.** `run_checks`, the finish gate and `check_guard` could not show a gain, because
   the control never claimed false "done" or tampered with a test in 12 runs; the bait tasks need to be harder.
 - **The guard is a seat belt, not a sandbox.** It stops the common catastrophic mistake an agent makes. 18
-  commands from the wider corpus still get through (see Results) and are pinned as expected failures;
+  commands from the wider corpus still get through (see Results); 16 of them are pinned as expected failures;
   `sudo` is blocked outright.
 - **`--home DIR` and `HOME=DIR` differ.** With `--home` the installer skips editor extensions; with the
   environment variable it treats the folder as your real home and installs VS Code extensions into it
-  (a download). `scripts/check.sh` uses `--home`.
+  (a download). `scripts/demo.sh` and `scripts/check.sh` use `--home`.
 - **Not run in CI yet.** The workflow file is written; this repository has not been pushed with it.
+- **Packaging checked offline only.** `pyproject.toml` was verified by building and installing the wheel with
+  `pip install --no-index --no-deps --no-build-isolation --target DIR .` and running `harness install` and
+  `doctor` from it; `pipx` and `uvx` themselves were not available to test.
 - Related, not part of this repository: a private task-graph tool (claude-plan-harness) drives work from
   plan files; it is not included.
 
 ## What I learned
 
-Four candidate lessons, each drawn from a conclusion the eval reports record, with its source. They are
-drafts for Oscar to confirm or strike, not yet his own words.
+Each lesson is drawn from a conclusion an eval record states, with its source. Lesson 5, from the 2026-10-03
+attempt, is still a draft.
 
 1. **Set the keep rule before the eval, and let it decide.** It shipped `session_search` (recall 6/6 against 1/6
    and 0/6) and learned skills, and kept the two arms off because they showed no gain
    (source: [eval/results/historical.md](eval/results/historical.md), "Decisions the report made with its pre-set
    keep rule").
 
-   DRAFT — Oscar to confirm
-
 2. **At n=3 a gain can be indistinguishable from noise.** Claude's second runs spread 0.56x to 1.91x with no skill
    involved, and creating a skill costs the first run, so it pays back only from about the third use
    (source: [eval/results/historical.md](eval/results/historical.md), the `skill_manage` entry).
-
-   DRAFT — Oscar to confirm
 
 3. **A harness's overhead is mostly what it puts in every request.** The v0.1.0 rules cost 4,925 tokens per
    request and the lean v0.1.1 rules 2,291 (-53%); Codex went from 1.82x plain's tokens to 0.82x between those
    versions while Claude's accuracy rose from 17 to 20 of 20 (source: the v0.1.1 eval report, 2026-09-30, which is
    private; only the 2,291 figure is transcribed in [eval/results/historical.md](eval/results/historical.md)).
 
-   DRAFT — Oscar to confirm
-
 4. **A check that guards against a failure shows a gain only when the control fails.** Claude did not tamper with
    or falsely claim "done" on any of 12 control runs, so the two check arms could not be judged
    (source: [eval/results/historical.md](eval/results/historical.md), "v0.1.1 eval ... the check arms").
+
+5. **Check that a run reached the model before grading it.** With the CLI's login expired, six runs each
+   "succeeded" in about a second with 0 tokens, and the runner graded all six as wrong answers instead of
+   stopping; it now stops at the first run that cannot authenticate (source:
+   [eval/results/public-synthetic-2026-10-03-claude-opus-5-1m-not-run.json](eval/results/public-synthetic-2026-10-03-claude-opus-5-1m-not-run.json)).
 
    DRAFT — Oscar to confirm
