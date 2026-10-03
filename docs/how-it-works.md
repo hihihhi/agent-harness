@@ -126,7 +126,9 @@ The rules ask for good behaviour; the harness enforces a floor where the tool al
 - **Guard** (`content/hooks/guard.py`): runs before every shell command in Claude Code and blocks
   catastrophic ones: recursive deletion of the home folder, `/` or a path built from a variable
   that might be empty; disk wipes; fork bombs; `chmod -R 777 /`; downloads piped into a shell from
-  unknown hosts; force-pushes to `main`/`master`; reading SSH keys or credential files; `sudo`.
+  unknown hosts, or an `echo`ed or base64-decoded script piped into a shell; `rsync --delete` into or `mv` of
+  the home folder; force-pushes to `main`/`master`; reading SSH keys or credential files; `sudo`.
+  `tests/test_guard_cases.py` holds a wider corpus and names the gaps that remain.
   It uses only the Python standard library, adds about 40 ms per command, and is also a plain checker:
   `guard.py --check "<command>"`. It is a seat belt, not a sandbox.
 - **Finish check** (Claude Code): when the agent stops after editing project files, it is reminded once
