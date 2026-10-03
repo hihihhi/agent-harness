@@ -45,8 +45,8 @@ restores them all.
 | evidence | result | qualifier and source |
 |---|---|---|
 | Recall of an earlier session, harness v0.1.1 → v0.2.0 (same account setup; v0.2.0 adds `session_search`) | **Claude 1/3 → 3/3, Codex 0/3 → 3/3** | historical, **private corpus**, one run per question. n=3 is not significant per tool (Fisher exact p = 0.40, 0.10; pooled 1/6 → 6/6, p = 0.015). Plain's 0/3 is a floor: it cannot read past sessions. [eval/results/historical.md](eval/results/historical.md) |
-| Command guard, held out | **40/45 dangerous commands blocked (89%), 20/20 safe controls allowed** | written fresh, not from the corpus it was fixed against (in-sample: 99/99, 104/104). [tests/test_guard_heldout.py](tests/test_guard_heldout.py) |
-| Tests | **270 passed**, 2 skipped, 21 expected failures (pinned guard gaps and held-out misses) | `python3 -m pytest -q tests eval` |
+| Command guard, held out | **40/45 dangerous commands blocked (89%), 20/20 safe controls allowed** | written fresh by the same build session (2026-10-03, after reading the first review), not from the corpus it was fixed against (in-sample: 105/105, 108/108). [tests/test_guard_heldout.py](tests/test_guard_heldout.py) |
+| Tests, Python 3.9 | **270 passed**, 2 skipped, 21 expected failures (pinned guard gaps and held-out misses) | `python3 -m pytest -q tests eval`. On 3.11: 271 passed, 1 skipped (a TOML check needs `tomllib`; the other skip is a live check that needs `HARNESS_LIVE=1`) |
 
 Not everything gained: Claude with the harness used 1.24x plain's tokens in the v0.1.1 eval, two of the seven tools
 were measured, and the public synthetic eval has no results yet ([Results](#results), [Limits](#limits)).
@@ -129,12 +129,14 @@ model call: 6 runs, 0 tokens, not retried
 
 ### The command guard
 
-**Held out** (45 dangerous commands, 20 safe controls, written fresh on 2026-10-03): **40/45 blocked (89%)**,
+**Held out** (45 dangerous commands, 20 safe controls, written fresh on 2026-10-03 by the same AI build session
+that fixed the guard, after it had read the first review and before the cd fix): **40/45 blocked (89%)**,
 20/20 allowed; 39/45 before the cd fix. The 5 misses are pinned as expected failures: `rsync --delete` into
 `$HOME/`, `echo ~ | xargs rm -rf`, `truncate` of a system file, inline Python, inline Perl. Reproduce:
 `python3 tests/test_guard_heldout.py --rate`. **In-sample** ([tests/test_guard_cases.py](tests/test_guard_cases.py),
-the set the guard was fixed against): 99/99 blocked, 104/104 allowed, which measures fit. It includes 21 former
-bypasses and 13 commands a review found, such as `cd ~ && rm -rf *` and `command -p rm -rf ~`. Details and the
+the set the guard was fixed against): 105/105 blocked, 108/108 allowed, which measures fit. It includes 21 former
+bypasses and 19 commands two reviews found, such as `cd ~ && rm -rf *`, `command -p rm -rf ~`,
+`bash <(echo 'rm -rf ~')` and `git push --mirror`. Details and the
 disagreement table: [docs/how-it-works.md](docs/how-it-works.md#the-guard-against-a-wider-corpus-and-a-held-out-set).
 
 ## How to run

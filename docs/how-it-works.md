@@ -223,12 +223,15 @@ The counts come from that one-off comparison (the private test file is not in th
 2026-10-03 then found that a glob after a `cd` into home or root (`cd ~ && rm -rf *`, `pushd ~ && ...`,
 `cd / && ...`), `command -p rm -rf ~` and `xargs rm -rf <<< ~` got through. The guard now resolves a relative
 operand against a `cd`/`pushd` earlier on the same line, skips the flags of `command`/`exec`/`builtin`, and
-reads a here-string into `xargs` as operands; those 13 commands joined the corpus, which is now 99 dangerous
-commands (all blocked) and 104 safe ones (all allowed). Because the guard was fixed against it, the corpus
+reads a here-string into `xargs` as operands. A second review found that process substitution feeding a shell or
+`source` (`bash <(echo ...)`) and `git push --mirror` got through; the first is now checked like a pipe into a
+shell, the second is blocked outright. Those 19 commands joined the corpus, which is now 105 dangerous
+commands (all blocked) and 108 safe ones (all allowed). Because the guard was fixed against it, the corpus
 measures fit, not generalisation.
 
 **The held-out set.** [tests/test_guard_heldout.py](../tests/test_guard_heldout.py) holds 45 dangerous commands
-and 20 safe controls written fresh on 2026-10-03, not taken from the corpus (a test checks that). Result:
+and 20 safe controls written fresh on 2026-10-03 by the same AI build session that fixed the guard, after it
+had read the first review and before the cd fix; none is taken from the corpus (a test checks that). Result:
 **40 of 45 dangerous commands blocked (89%), 20 of 20 safe controls allowed**; 39 of 45 before the cd fix.
 The 5 misses are pinned as expected failures: `rsync --delete` into a destination spelled with `$HOME`, `echo ~
 | xargs rm -rf` (piped input to `xargs`), `truncate` of a system file, and inline Python and Perl code. Run

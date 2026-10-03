@@ -42,6 +42,10 @@ DANGEROUS = {
         "cd /Users && rm -rf *", "cd ~ && rm -rf .*", "builtin cd ~ && rm -rf *", "cd ~ && find . -delete",
         "command -p rm -rf ~", "xargs rm -rf <<< ~", "cd ~/.. && rm -rf *", "cd ~ && cd .. && rm -rf *",
     ],
+    "process substitution feeding a shell, and a mirror push (found by review round 2, 2026-10-03)": [
+        "bash <(echo 'rm -rf ~')", "source <(echo 'rm -rf ~')", ". <(printf '%s' 'rm -rf /')",
+        "bash < <(echo 'rm -rf ~')", "source <(echo aGVsbG8= | base64 -d)", "git push --mirror origin",
+    ],
     "shells and eval running a destructive command": [
         'bash -c "rm -rf /home/alice"', '/bin/sh -c "rm -rf $HOME"', "bash <<EOF\nrm -rf ~\nEOF",
     ],
@@ -73,6 +77,9 @@ SAFE = {
     "cleanup after cd into a project (the cd-then-glob fix must not catch these)": [
         "cd ~/code/app && rm -rf *", "cd ~/proj && rm -rf build", "cd ~/proj && find . -name '*.pyc' -delete",
         "cd $BUILD_DIR && rm -rf *", "cd .. && rm -rf dist", "cd ~ && ls -la",
+    ],
+    "process substitution that is not a destructive script": [
+        "diff <(ls a) <(ls b)", "source <(kubectl completion bash)", "bash <(echo 'ls -la')", "git push --all origin",
     ],
     "ordinary cleanup inside a project": [
         "rm -f build/*.o", "rm -rf dist build", "rm package-lock.json", "rm -rf ./node_modules",

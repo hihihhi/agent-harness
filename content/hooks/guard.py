@@ -500,7 +500,9 @@ def check_git(args):
     if (force or delete) and protected:
         block("git push %s to %s rewrites shared history"
               % ("--delete" if delete and not force else "--force", protected[0]))
-    if force and ("--all" in flags or "--mirror" in flags):
+    if "--mirror" in flags:   # mirrors every local ref and deletes remote refs it lacks, force or not
+        block("git push --mirror overwrites and deletes refs on the remote")
+    if force and "--all" in flags:
         block("force push of all branches")
     if force and not refspecs:
         block("git push --force without naming a branch; name it (git push --force origin my-branch)")
@@ -574,6 +576,25 @@ def check_piped_script(pipes, depth):
                             check(a, depth + 1)
 
 
+def process_substitutions(cmd):
+    """(the command consuming it, body) for each `<(body)`."""
+    out, start = [], cmd.find("<(")
+    while start != -1:
+        level, k = 0, start + 1
+        while k < len(cmd):
+            if cmd[k] == "(":
+                level += 1
+            elif cmd[k] == ")":
+                level -= 1
+                if level == 0:
+                    break
+            k += 1
+        prefix = re.split(r"[;&|\n]", cmd[:start])[-1].replace("<", " ").split()
+        out.append((unwrap(prefix)[0], cmd[start + 2:k]))
+        start = cmd.find("<(", k)
+    return out
+
+
 def check(cmd, depth=0):
     if depth > MAX_DEPTH or not cmd.strip():
         return
@@ -582,6 +603,9 @@ def check(cmd, depth=0):
             block("fork bomb")
     for inner in substitutions(strip_heredocs(cmd)):  # $(...) and `...` run even inside "..."
         check(inner, depth + 1)
+    for name, body in process_substitutions(strip_heredocs(cmd)):
+        if name in SHELLS or name in ("source", "."):  # `bash <(echo ...)` is `echo ... | bash`
+            check(body + " | bash", depth + 1)
     pipes = pipelines(tokenize(cmd))
     check_remote_exec(cmd, pipes)
     check_piped_script(pipes, depth)
