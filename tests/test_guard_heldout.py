@@ -1,5 +1,5 @@
-"""A held-out set for content/hooks/guard.py: commands written fresh on 2026-10-03, after the corpus fixes and
-before the cd-then-glob fix, and not copied from tests/test_guard_cases.py (a test below checks that). The corpus
+"""A held-out set for content/hooks/guard.py: commands written fresh on 2026-10-03 by the same AI build session that
+fixes the guard, after it had read the first review, after the corpus fixes and before the cd-then-glob fix, and not copied from tests/test_guard_cases.py (a test below checks that). The corpus
 measures fit (the guard was fixed against it); this set measures how the guard does on commands it was not
 tuned on. Two entries that turned out to be in the corpus already were replaced by new ones after the fix
 (`rsync -av --delete ./empty/ $HOME/`, `rm -rf ./dist ./coverage`). Misses are pinned as expected failures, not
