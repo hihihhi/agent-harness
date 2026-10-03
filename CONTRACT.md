@@ -35,6 +35,8 @@ content/prompts/*.md                     reusable prompts / slash commands      
 profiles/example/profile.toml            example profile (public, generic)                  (A4)
 README.md, docs/                         user-facing, zero prior knowledge assumed          (A4)
 scripts/secret-scan.sh                   leak scan incl. a planted-key control              (main)
+scripts/check.sh                         tests + secret scan + install demo in a throwaway home
+eval/                                    A/B eval: runner, report, SYNTHETIC questions and corpus
 ```
 
 ## Shared names

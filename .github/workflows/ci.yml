@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the secret scan reads every commit
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install pytest
+        run: python -m pip install pytest
+      - name: Tests (harness, guard corpus, eval instrument)
+        run: python -m pytest -q tests eval
+      - name: Secret scan (scanner self-test, then working tree and history)
+        run: |
+          bash scripts/secret-scan.sh --self-test
+          bash scripts/secret-scan.sh
