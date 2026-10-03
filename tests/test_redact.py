@@ -67,7 +67,7 @@ class RedactTest(unittest.TestCase):
 
     def test_ordinary_text_untouched(self):
         text = ("The token budget is 4096 and the password policy needs 12 characters; see docs/keys.md; "
-                "run mkdir -p ~/igsl-data and open https://example.org/a:b")
+                "run mkdir -p ~/acme-data and open https://example.org/a:b")
         self.assertEqual(redact(text), text)
 
 

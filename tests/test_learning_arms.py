@@ -43,7 +43,7 @@ class SnapshotTest(Base):
 
     def test_off_by_default_on_when_enabled_and_capped(self):
         m = Memory(home=self.hh)
-        m.mem_add("my scratch outputs live in ~/igsl-data/kestrel-scratch")
+        m.mem_add("my scratch outputs live in ~/acme-data/kestrel-scratch")
         m.mem_search("scratch outputs kestrel")                         # used once: ranks first
         for i in range(80):
             m.mem_add("fact number %d about widget %s" % (i, "q" * i))

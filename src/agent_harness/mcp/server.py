@@ -38,7 +38,7 @@ INSTRUCTIONS = (
     "about the user's own setup or past decisions; mem_add when told to remember something."
 )
 # HARNESS_HOME/notices.json = {"notices": ["one line", ...]}: written by whatever installed the harness
-# (an organisation's own wrapper, e.g. "AI tools update available (v0.1.0 -> v0.2.0): run `igsl ai update`"),
+# (an organisation's own wrapper, e.g. "AI tools update available (v0.1.0 -> v0.2.0): run `acme ai update`"),
 # read here, never fetched. The first pending line joins the instructions of the first session of the
 # day (HARNESS_HOME/.notices-mcp-day), so the assistant mentions it once; none pending, nothing is added.
 NOTICES = "notices.json"

@@ -780,7 +780,7 @@ class NoticeTests(TmpCase):
 
     def test_once_a_day(self):
         from agent_harness.mcp.server import INSTRUCTIONS
-        line = "AI tools update available (v0.1.0 -> v0.2.0): run `igsl ai update`"
+        line = "AI tools update available (v0.1.0 -> v0.2.0): run `acme ai update`"
         self._pending(line, "a second notice waits its turn")
         first = self._init()
         self.assertTrue(first.startswith(INSTRUCTIONS))

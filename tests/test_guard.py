@@ -197,38 +197,38 @@ class TestHookProtocol(unittest.TestCase):
 
 
 PROTECTED_BLOCKED = [
-    "rm -rf /local/Market/A-Stock",
-    "rm /local/Market/A-Stock/cleansed/trades/_log.jsonl",
-    "rm -r /local",                                   # a parent of a protected tree
-    "cd /local/Market && rm -rf A-Stock",
-    "rmdir /local/Market/Polymarket/table",
-    "unlink /local/Market/x.parquet",
-    "truncate -s0 /local/Market/A-Stock/x.parquet",
-    "shred -u /tank/raw/2026/x.7z",
-    "mv /local/Market/A-Stock /tmp/old",
-    "mv /tmp/new.parquet /local/Market/A-Stock/x.parquet",
-    "find /local/Market -name '*.parquet' -delete",
-    "find /tank/raw -exec rm {} +",
-    "rsync -a --delete /tmp/empty/ /local/Market/A-Stock/",
-    "dd if=/dev/zero of=/local/Market/x.parquet",
-    "echo > /local/Market/A-Stock/x.parquet",
-    "zfs destroy hddpool/local-market@auto-20261003T00",
-    "zfs rollback hddpool/local-market@auto-20261003T00",
-    "python3 -c \"import shutil; shutil.rmtree('/local/Market/Crypto-Tardis')\"",
-    "python3 -c \"import os; os.remove('/local/Market/A-Stock/x')\"",
-    "python -c \"open('/local/Market/x.parquet','w').write('')\"",
-    "rm -rf \"$D/local/Market\"",
-    "nice rm -rf /local/Market/A-Stock/cleansed",
+    "rm -rf /srv/data/equities",
+    "rm /srv/data/equities/clean/trades/_log.jsonl",
+    "rm -r /srv",                                   # a parent of a protected tree
+    "cd /srv/data && rm -rf equities",
+    "rmdir /srv/data/events/table",
+    "unlink /srv/data/x.parquet",
+    "truncate -s0 /srv/data/equities/x.parquet",
+    "shred -u /srv/archive/2026/x.7z",
+    "mv /srv/data/equities /tmp/old",
+    "mv /tmp/new.parquet /srv/data/equities/x.parquet",
+    "find /srv/data -name '*.parquet' -delete",
+    "find /srv/archive -exec rm {} +",
+    "rsync -a --delete /tmp/empty/ /srv/data/equities/",
+    "dd if=/dev/zero of=/srv/data/x.parquet",
+    "echo > /srv/data/equities/x.parquet",
+    "zfs destroy tank/srv-data@auto-20261003T00",
+    "zfs rollback tank/srv-data@auto-20261003T00",
+    "python3 -c \"import shutil; shutil.rmtree('/srv/data/crypto')\"",
+    "python3 -c \"import os; os.remove('/srv/data/equities/x')\"",
+    "python -c \"open('/srv/data/x.parquet','w').write('')\"",
+    "rm -rf \"$D/srv/data\"",
+    "nice rm -rf /srv/data/equities/cleansed",
 ]
 PROTECTED_ALLOWED = [
-    "ls -la /local/Market/A-Stock",
-    "du -sh /local/Market/*",
-    "cat /local/Market/A-Stock/cleansed/trades/_log.jsonl | tail -3",
-    "python3 -c \"import pyarrow.parquet as pq; print(pq.read_metadata('/local/Market/x.parquet'))\"",
-    "cp /local/Market/A-Stock/x.parquet /tmp/x.parquet",
-    "rsync -a /local/Market/A-Stock/ /tmp/copy/",
+    "ls -la /srv/data/equities",
+    "du -sh /srv/data/*",
+    "cat /srv/data/equities/clean/trades/_log.jsonl | tail -3",
+    "python3 -c \"import pyarrow.parquet as pq; print(pq.read_metadata('/srv/data/x.parquet'))\"",
+    "cp /srv/data/equities/x.parquet /tmp/x.parquet",
+    "rsync -a /srv/data/equities/ /tmp/copy/",
     "rm -rf /tmp/work /home/a/scratch/out",
-    "find /local/Market -name '*.parquet' | wc -l",
+    "find /srv/data -name '*.parquet' | wc -l",
     "zfs list -t snapshot",
 ]
 
@@ -238,7 +238,7 @@ class TestProtectedData(unittest.TestCase):
         import tempfile
         fd, self.f = tempfile.mkstemp()
         with os.fdopen(fd, "w") as fh:
-            fh.write("# data trees\n/local/Market\n/tank/raw/\n")
+            fh.write("# data trees\n/srv/data\n/srv/archive/\n")
         self.old = os.environ.get("HARNESS_GUARD_PROTECTED_FILE")
         os.environ["HARNESS_GUARD_PROTECTED_FILE"] = self.f
 
@@ -262,11 +262,11 @@ class TestProtectedData(unittest.TestCase):
     def test_control_without_the_file(self):
         # the list is what protects: without it a deep data path is an ordinary path
         os.environ["HARNESS_GUARD_PROTECTED_FILE"] = self.f + ".absent"
-        self.assertIsNone(guard.verdict("rm -rf /local/Market/A-Stock"))
-        self.assertIsNone(guard.verdict("truncate -s0 /local/Market/A-Stock/x.parquet"))
+        self.assertIsNone(guard.verdict("rm -rf /srv/data/equities"))
+        self.assertIsNone(guard.verdict("truncate -s0 /srv/data/equities/x.parquet"))
 
     def test_hook_payload_blocks(self):
-        payload = {"tool_name": "Bash", "tool_input": {"command": "rm -rf /local/Market/A-Stock"}}
+        payload = {"tool_name": "Bash", "tool_input": {"command": "rm -rf /srv/data/equities"}}
         r = subprocess.run([sys.executable, str(GUARD)], input=json.dumps(payload), capture_output=True,
                            text=True, env=dict(os.environ))
         self.assertEqual(r.returncode, 2, r.stderr)
