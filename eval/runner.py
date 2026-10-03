@@ -7,7 +7,9 @@ PHASE
     grade-selftest   every grader against its own pass and fail example (no model, no spend)
     snap             before any run: record what the harness store holds now (so a run's writes can be taken out)
     v02:claude | v02:codex | v02fixed | arms
+    public           Claude only, P vs H (below), no installed harness needed; --kinds narrows the question kinds
     cleanup          after all runs: take whatever the eval wrote out of the harness store
+    public-cleanup   the same for the public phase, then remove the sandbox
 
 Each run is appended to DIR/results.jsonl (a run already recorded is skipped, so a phase can be restarted);
 raw CLI output goes to DIR/raw/. A rate-limit error writes DIR/STOP and every phase stops at its next run.
@@ -21,6 +23,11 @@ with one version installed and a run is refused when the installed version does 
             (Codex has no flag that skips ~/.codex/AGENTS.md, so Codex "plain" still carries the rules text.)
     A011    harness 0.1.1 installed, as installed            A02   harness 0.2.0 installed, as installed
     A02s    A02 + HARNESS_ENABLE=memory_snapshot (arm)       A02n  Claude only: A02 + HARNESS_ENABLE=skill_nudge
+    P       public phase, plain: claude with no user settings (--setting-sources project) and no MCP servers
+    H       public phase: P + THIS tree's harness, installed into a throwaway home (EVAL_SANDBOX) and loaded with
+            flags (--settings, --mcp-config, rules via --append-system-prompt-file), so your account is untouched.
+            Its MCP server runs with the sandbox as HOME, so session_search reads only a copy of the eval's own
+            transcripts. Skills and slash prompts are not loaded in this arm.
 Question kinds: fact, procedure, multihop, undocumented (retrieval from the corpus); memory (session 1 says
 "remember"; session 2, fresh, asks); recall (session 1 says something, never "remember"; session 2 asks about
 it); repeat (session 1 computes something from the data; session 2 does the same procedure on other values).
@@ -68,6 +75,8 @@ FIXED_PROMPT = "Reply with OK only."
 ASK_RE = re.compile(r"(would you like|do you want|should i\b|shall i\b|want me to|let me know if|"
                     r"(could|can) you (tell|share|confirm|clarify|specify)|please (confirm|clarify|specify))", re.I)
 LIMIT_RE = re.compile(r"rate.?limit|usage.?limit|usage_limit_reached|hit your limit|quota|\b429\b|overloaded", re.I)
+# a run that never reached the model (expired login): every later run would fail the same way and be graded wrong
+AUTH_RE = re.compile(r"failed to authenticate|not logged in|please run /login|invalid api key", re.I)
 HH = Path(os.environ.get("HARNESS_HOME") or Path.home() / ".agent-harness")
 HARNESS_STATE = [HH / d for d in ("memory", "lessons", "sessions", "state")]
 CLAUDE_PROJ = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", WORK)
@@ -77,6 +86,8 @@ LEARNED = Path.home() / ".agents" / "skills" / "learned"
 CONDS = {"A011": ("A", "", "0.1.1"), "A02": ("A", "", "0.2.0"), "A02s": ("A", "memory_snapshot", "0.2.0"),
          "A02n": ("A", "skill_nudge", "0.2.0")}
 PLAIN = "plain"
+PUBLIC = ("P", "H")
+SANDBOX = Path(os.environ.get("EVAL_SANDBOX") or TMP / "harness-eval-sandbox").resolve()
 
 
 # ------------------------------------------------------------------ grading
@@ -251,10 +262,19 @@ def command(tool, cond, prompt, max_turns=MAX_TURNS, allowed=ALLOWED, cwd=None, 
     cwd = cwd or WORK
     cond = base_cond(cond)
     if tool == "claude":
+        # no --permission-prompts: Claude Code 2.1 rejects it as an unknown option; in -p a tool outside
+        # --allowedTools is denied without a prompt anyway
         c = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--max-turns", str(max_turns),
-             "--permission-mode", "acceptEdits", "--permission-prompts", "none", "--allowedTools", allowed]
+             "--permission-mode", "acceptEdits", "--allowedTools", allowed]
         if cond == PLAIN:
             c += ["--safe-mode", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
+        elif cond == "P":
+            c += ["--setting-sources", "project", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
+        elif cond == "H":
+            c[c.index("--allowedTools") + 1] += " mcp__harness"
+            c += ["--setting-sources", "project", "--settings", str(SANDBOX / ".claude" / "settings.json"),
+                  "--append-system-prompt-file", str(SANDBOX / ".claude" / "CLAUDE.md"),
+                  "--strict-mcp-config", "--mcp-config", str(SANDBOX / "eval-mcp.json")]
         return c
     c = ["codex", "exec", "--json", "--skip-git-repo-check"] + (["--ephemeral"] if ephemeral else []) + \
         ["-s", "read-only", "-C", cwd]
@@ -299,11 +319,13 @@ class Runner:
         if self.stopped():
             raise SystemExit("STOP present: " + (self.dir / "STOP").read_text())
         text = (q["setup"] if session == "setup" else q["q"]).replace("{tok}", tok)
-        prompt = (self.qs["b_prefix"] if cond == PLAIN else "") + text
+        prompt = (self.qs["b_prefix"] if cond in (PLAIN, "P") else "") + text
         name = key.replace("|", "-")
         env, version = self._env(cond)
         repeat = q["kind"] == "repeat"
         settle()                                   # the previous session's transcript is complete
+        if cond == "H":
+            mirror_transcripts()
         # a pair's first session must leave a Codex transcript for the second to find, as a real session would
         ephemeral = not (session == "setup" and q["kind"] in ("recall", "repeat"))
         cmd = command(tool, cond, prompt, max_turns=REPEAT_TURNS if repeat else MAX_TURNS,
@@ -335,6 +357,9 @@ class Runner:
         if (m.get("error") or p.returncode not in (0, 124)) and LIMIT_RE.search(err_text):
             (self.dir / "STOP").write_text("%s %s: %s\n" % (rec["ts"], key, err_text.strip()[:500]))
             rec["rate_limited"] = True
+        elif m.get("error") and AUTH_RE.search(err_text):
+            (self.dir / "STOP").write_text("%s %s: not authenticated: %s\n" % (rec["ts"], key, err_text.strip()[:500]))
+            rec["auth_failed"] = True
         self._append(rec)
         print("%s %-6s %-5s %-4s rep%d %s wall=%5.1fs tools=%d tok=%s %s" % (
             rec["ts"][11:19], tool, cond, q["id"], rep, session, wall, rec["n_tools"], rec.get("tok_total"),
@@ -407,6 +432,9 @@ class Runner:
         if m.get("error") and LIMIT_RE.search(m["error"]):
             (self.dir / "STOP").write_text("%s: %s\n" % (key, m["error"][:500]))
             rec["rate_limited"] = True
+        elif m.get("error") and AUTH_RE.search(m["error"]):
+            (self.dir / "STOP").write_text("%s: not authenticated: %s\n" % (key, m["error"][:500]))
+            rec["auth_failed"] = True
         self._append(rec)
         print("%s wall=%.0fs tools=%d gold=%s tamper=%s false_done=%s asks=%d checks=%d tok=%s" % (
             key, wall, rec["n_tools"], rec["gold_pass"], rec["tamper"], rec["false_done"], rec["guard_asks"],
@@ -516,6 +544,52 @@ def quarantine(before, dest):
     return moved
 
 
+def use_sandbox():
+    """Public phase: the harness store, learned skills and HARNESS_HOME (read by hooks, by quarantine's memory
+    resync and by the MCP server) all point into the sandbox, so neither a run nor the cleanup touches the
+    store of a harness installed in your account."""
+    global HH, HARNESS_STATE, LEARNED
+    HH = SANDBOX / ".agent-harness"
+    HARNESS_STATE = [HH / d for d in ("memory", "lessons", "sessions", "state")]
+    LEARNED = SANDBOX / ".agents" / "skills" / "learned"
+    os.environ["HARNESS_HOME"] = str(HH)
+
+
+def sandbox_install():
+    """This tree's harness into SANDBOX with --home (never your home; editor extensions are skipped), plus the
+    MCP config the H arm loads: the server's HOME is the sandbox."""
+    shutil.rmtree(SANDBOX, ignore_errors=True)
+    SANDBOX.mkdir(parents=True)
+    subprocess.run([sys.executable, str(HERE.parent / "bin" / "harness"), "--home", str(SANDBOX), "install", "--yes",
+                    "--tools", "claude-code"], check=True, stdout=subprocess.DEVNULL, env=dict(os.environ, HARNESS_HOME=str(HH)))
+    server = json.loads((SANDBOX / ".claude.json").read_text(encoding="utf-8"))["mcpServers"]["harness"]
+    server["env"] = {"HOME": str(SANDBOX), "HARNESS_HOME": str(HH)}
+    (SANDBOX / "eval-mcp.json").write_text(json.dumps({"mcpServers": {"harness": server}}), encoding="utf-8")
+
+
+def mirror_transcripts():
+    """Before an H run: the sandbox's copy of the eval cwd's transcripts is made equal to the real folder, so a
+    pair's second session finds the first, and a quarantined run is gone from the copy too."""
+    dst = SANDBOX / ".claude" / "projects" / CLAUDE_PROJ.name
+    shutil.rmtree(dst, ignore_errors=True)
+    if CLAUDE_PROJ.is_dir():
+        shutil.copytree(CLAUDE_PROJ, dst)
+
+
+def public(r, qs, kinds):
+    """P vs H on the question kinds given: retrieval questions alternate which arm goes first, then the pairs."""
+    paired = ("memory", "recall", "repeat")
+    regular = [q for q in qs["questions"] if q["kind"] in kinds and q["kind"] not in paired]
+    for i, q in enumerate(regular):
+        for c in (PUBLIC if i % 2 == 0 else tuple(reversed(PUBLIC))):
+            r.run("claude", c, q, 1)
+    for c in PUBLIC:
+        tok = qs["v02_tokens"]["claude:" + c]
+        for q in qs["questions"]:
+            if q["kind"] in kinds and q["kind"] in paired and "claude|%s|%s|q|1" % (c, q["id"]) not in r.done:
+                pair(r, "claude", c, q, tok)
+
+
 def plan_for(version):
     """{tool: [(cond, kinds it runs)]} for the harness installed now (the two passes of the eval)."""
     old = ("fact", "procedure", "multihop", "undocumented", "memory", "recall", "repeat")
@@ -566,12 +640,23 @@ def main():
     ap.add_argument("phase")
     ap.add_argument("--dir", default=str(HERE / "out"))
     ap.add_argument("--questions", default=str(HERE / "questions" / "synthetic.json"))
+    ap.add_argument("--kinds", help="public phase: comma-separated question kinds (default: all)")
     a = ap.parse_args()
     qs = load_questions(a.questions)
     if a.phase == "grade-selftest":
         sys.exit(0 if selftest(qs) else 1)
+    if a.phase.startswith("public"):
+        use_sandbox()
+    if a.phase == "public":
+        sandbox_install()
     r = Runner(a.dir, qs)
-    if a.phase.startswith("v02"):
+    if a.phase == "public":
+        prepare_work(qs)
+        if r.base is None:                       # what the sandbox held before any run
+            (r.dir / "snapshot-start.json").write_text(json.dumps(sorted(snapshot())))
+            r.base = snapshot()
+        public(r, qs, a.kinds.split(",") if a.kinds else [q["kind"] for q in qs["questions"]])
+    elif a.phase.startswith("v02"):
         prepare_work(qs)
         v02(r, qs, a.phase)
     elif a.phase == "arms":
@@ -583,7 +668,7 @@ def main():
                     r.arm(t, arm, rep)
     elif a.phase == "snap":
         (r.dir / "snapshot-start.json").write_text(json.dumps(sorted(snapshot())))
-    elif a.phase == "cleanup":
+    elif a.phase in ("cleanup", "public-cleanup"):
         before = set(json.loads((r.dir / "snapshot-start.json").read_text()))
         moved = quarantine(before, r.dir / "quarantine" / "end")
         with open(r.dir / "memory-writes.jsonl", "a", encoding="utf-8") as f:
@@ -591,6 +676,8 @@ def main():
         print("quarantined %d harness files written during the eval" % len(moved))
         for d in [CLAUDE_PROJ] + list((Path.home() / ".claude" / "projects").glob(re.sub(r"[^A-Za-z0-9]", "-", CODE) + "-*")):
             shutil.rmtree(d, ignore_errors=True)    # the eval's own Claude transcripts: bulky, eval-only
+        if a.phase == "public-cleanup":
+            shutil.rmtree(SANDBOX, ignore_errors=True)
     else:
         sys.exit("unknown phase " + a.phase)
 

@@ -6,7 +6,7 @@
   "allowed_extra": "",
   "abstain": "not (documented|specified|mentioned|stated|defined|given|listed|covered)|(isn't|is not|aren't|are not) (documented|specified|mentioned|covered)|(doesn't|does not|don't|do not) (document|specify|mention|say|define|list|describe|state|give|cover)|no (documented|such|published|mention|information)|(could not|couldn't|can't|cannot) find|there (is|are) no|there's no|there (isn't|is not) (a|any)|nothing (in|about)|undocumented|unknown",
   "v02_tokens": {
-    "claude:A011": "wren", "claude:A02": "finch", "claude:A02s": "lark", "claude:A02n": "swift", "claude:plain": "robin",
+    "claude:A011": "wren", "claude:A02": "finch", "claude:A02s": "lark", "claude:A02n": "swift", "claude:plain": "robin", "claude:P": "plover", "claude:H": "heron",
     "codex:A011": "teal", "codex:A02": "gannet", "codex:A02s": "shrike", "codex:plain": "merlin"
   },
   "questions": [

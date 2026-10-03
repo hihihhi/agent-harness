@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-harness"
+dynamic = ["version"]
+description = "One standard-library install that gives seven AI coding tools the same rules, memory, retrieval, lessons and command guard."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+harness = "agent_harness.cli:main"
+
+[tool.setuptools]
+# content/ (rules, hooks, skills, prompts) ships inside the package, so an install from a wheel finds it
+package-dir = {"" = "src", "agent_harness.content" = "content"}
+packages = ["agent_harness", "agent_harness.adapters", "agent_harness.mcp", "agent_harness.content"]
+
+[tool.setuptools.package-data]
+"agent_harness.content" = ["*.md", "*.toml", "hooks/*.py", "prompts/*.md", "skills/*/*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "agent_harness.__version__"}

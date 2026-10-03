@@ -21,7 +21,7 @@ DEFAULT_QUESTIONS = HERE / "questions" / "synthetic.json"
 # "I could not check, so I will not say": a refusal, not a hallucination
 REFUSE = (r"(can't|cannot|couldn't|could not|unable to|can not) (verify|safely|confirm|read|access|check|provide|name|give)"
           r"|please (paste|run|share)|(don't|do not) want to guess")
-GROUPS = [(t, c) for t in ("claude", "codex") for c in (runner.PLAIN, "A011", "A02", "A02s", "A02n")]
+GROUPS = [(t, c) for t in ("claude", "codex") for c in (runner.PLAIN, "A011", "A02", "A02s", "A02n") + runner.PUBLIC]
 KINDS = ["fact", "procedure", "multihop", "undocumented", "memory", "recall", "repeat"]
 OLD_KINDS = ("fact", "procedure", "multihop", "undocumented", "memory")
 TOK_LIMIT = 1.15      # token overhead must stay within +15% of v0.1.1
@@ -117,9 +117,9 @@ def tables(runs, qs):
           "median tok ratio | median wall ratio | median tools diff |")
     print("|---|---|---|---|---|---|---|---|")
     for t in ("claude", "codex"):
-        for ca in ("A011", "A02"):
+        for ca, cb in (("A011", runner.PLAIN), ("A02", runner.PLAIN), ("H", "P")):
             pa = {r["qid"]: r for r in q1 if r["tool"] == t and r["cond"] == ca}
-            pb = {r["qid"]: r for r in q1 if r["tool"] == t and r["cond"] == runner.PLAIN}
+            pb = {r["qid"]: r for r in q1 if r["tool"] == t and r["cond"] == cb}
             common = sorted(set(pa) & set(pb))
             if not common:
                 continue
@@ -128,7 +128,7 @@ def tables(runs, qs):
             tr = med([pa[q]["tok_total"] / pb[q]["tok_total"] for q in common if pb[q].get("tok_total")])
             wr = med([pa[q]["wall_s"] / pb[q]["wall_s"] for q in common if pb[q]["wall_s"]])
             td = med([pa[q]["n_tools"] - pb[q]["n_tools"] for q in common])
-            print(f"| {t} | {ca} vs plain | {len(common)} | {aw} | {bw} | {fmt(tr, 2)} | {fmt(wr, 2)} | {fmt(td, 1)} |")
+            print(f"| {t} | {ca} vs {cb} | {len(common)} | {aw} | {bw} | {fmt(tr, 2)} | {fmt(wr, 2)} | {fmt(td, 1)} |")
 
     print("\n## Every wrong answer\n")
     for r in runs:
