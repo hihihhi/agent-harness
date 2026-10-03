@@ -238,8 +238,7 @@ the build contract: [CONTRACT.md](CONTRACT.md).
 
 ## What I learned
 
-Each lesson is drawn from a conclusion an eval record states, with its source. Lesson 5, from the 2026-10-03
-attempt, is still a draft.
+Each lesson is drawn from a conclusion an eval record states, with its source; all five confirmed by Oscar on 2026-10-03.
 
 1. **Set the keep rule before the eval, and let it decide.** It shipped `session_search` (recall 6/6 against 1/6
    and 0/6) and learned skills, and kept the two arms off because they showed no gain
@@ -264,5 +263,3 @@ attempt, is still a draft.
    "succeeded" in about a second with 0 tokens, and the runner graded all six as wrong answers instead of
    stopping; it now stops at the first run that cannot authenticate (source:
    [eval/results/public-synthetic-2026-10-03-claude-opus-5-1m-not-run.json](eval/results/public-synthetic-2026-10-03-claude-opus-5-1m-not-run.json)).
-
-   DRAFT — Oscar to confirm
