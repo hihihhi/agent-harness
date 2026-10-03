@@ -59,6 +59,8 @@ SECRET = re.compile(
     r"|(^|/)\.claude/\.credentials\.json$|(^|/)\.codex/auth\.json$"
     r"|(^|/)Keychains(/|$)|^/etc/(shadow|sudoers)"
     r"|\.(p12|pfx|key)$")
+FIND_DESTROYERS = {"rm", "/bin/rm", "shred", "truncate", "dd"}   # find ... -exec <one of these>
+SYSTEM_DIR = re.compile(r"^/(etc|boot|usr|bin|sbin|lib\w*|System|Library)(/|$)")
 ENV_FILE = re.compile(r"(^|/)\.env(\.[A-Za-z0-9_-]+)?$")
 ENV_OK = re.compile(r"\.(example|sample|template|dist)$")
 FORK_BOMB = [
@@ -118,6 +120,7 @@ def block(reason):
 
 # ---------------------------------------------------------------- tokenising
 
+IFS_VAR = re.compile(r"\$\{IFS\}|\$IFS\b")   # `rm${IFS}-rf${IFS}/` is `rm -rf /`
 HEREDOC = re.compile(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?")
 FEEDS_BODY = re.compile(r"\b(" + "|".join(sorted(SHELLS | INTERPRETERS | {"ssh", "eval"})) + r")\b[^|;&]*<<")
 
@@ -141,7 +144,7 @@ def strip_heredocs(cmd):
 
 def tokenize(cmd):
     """Shell-aware tokens; quotes are data. Newlines become separators."""
-    cmd = strip_heredocs(cmd).replace("\\\n", " ")
+    cmd = IFS_VAR.sub(" ", strip_heredocs(cmd)).replace("\\\n", " ")
     lex = shlex.shlex(cmd.replace("\n", " ; "), posix=True, punctuation_chars=";&|()<>")
     lex.whitespace_split = True
     lex.commenters = ""
@@ -236,9 +239,9 @@ def critical_path(p):
         return "a parent directory"
     if q in (".", "./"):
         return "the current directory"
-    if re.match(r"^~[A-Za-z0-9._-]*$", q) or q in ("$HOME", "${HOME}"):
+    if re.match(r"^~[A-Za-z0-9._-]*$", q) or q in ("$HOME", "${HOME}") or re.match(r"^\$\{HOME:\?[^}]*\}$", q):
         return "the home directory"
-    m = re.match(r"^(~|\$HOME|\$\{HOME\})/(.*)$", q)
+    m = re.match(r"^(~[A-Za-z0-9._-]*|\$HOME|\$\{HOME\})/(.*)$", q)
     if m:
         rest = [x for x in m.group(2).split("/") if x not in ("", ".")]
         if ".." in rest:
@@ -257,6 +260,8 @@ def critical_path(p):
             return "the filesystem root or a top-level system directory"
         if parts[0] in ("home", "Users") and len(parts) == 2:
             return "a user's home directory"
+        if parts[0] in ("home", "Users") and len(parts) == 3:
+            return "a top-level folder of a user's home directory"
         if any(c in parts[0] for c in "*?["):
             return "a glob over top-level system directories"
     return None
@@ -292,6 +297,11 @@ def check_segment(name, args, redirs, depth):
                 why = critical_path(op)
                 if why:
                     block("rm -r on %s (%s)" % (op, why))
+        elif risky_name and any(a.startswith("$") for a in args):  # R=rm; F=-rf; $R $F ~
+            for op in ops:
+                why = None if op.startswith("$") else critical_path(op)
+                if why:
+                    block("%s with a variable for its flags on %s (%s)" % (name, op, why))
 
     if name in ("chmod", "chown", "chgrp") and ("--recursive" in flags or has_short(flags, "R")):
         for op in ops[1:]:
@@ -299,7 +309,7 @@ def check_segment(name, args, redirs, depth):
             if why:
                 block("%s -R on %s (%s)" % (name, op, why))
 
-    if name == "find" and ("-delete" in args or any(a in ("rm", "/bin/rm") for a in args)):
+    if name == "find" and ("-delete" in args or any(a in FIND_DESTROYERS for a in args)):
         for a in args:
             if a.startswith("-") or a in ("(", "!"):
                 break
@@ -311,6 +321,18 @@ def check_segment(name, args, redirs, depth):
         for a in args:
             if a.startswith("of=") and a[3:].startswith("/dev/") and not SAFE_DEV.match(a[3:]):
                 block("dd onto a device (%s) wipes it" % a[3:])
+            if a.startswith("of=") and SYSTEM_DIR.match(a[3:]):
+                block("dd onto a system file (%s)" % a[3:])
+    if name == "rsync" and any(a == "--del" or a.startswith(("--delete", "--remove-source")) for a in args):
+        for op in ops[-1:]:  # the destination: --delete empties it
+            why = critical_path(op.split(":", 1)[-1]) if "$" not in op else None
+            if why:
+                block("rsync --delete into %s (%s)" % (op, why))
+    if name == "mv":
+        for op in ops[:-1]:  # a source: moving it away empties its place
+            why = None if "$" in op or "`" in op else critical_path(op)
+            if why:
+                block("mv of %s (%s)" % (op, why))
     if re.match(r"^(mkfs(\..+)?|mke2fs|mkswap|mkdosfs|mkntfs|newfs(_.+)?|wipefs|blkdiscard"
                 r"|fdisk|sfdisk|cfdisk|parted|sgdisk|shred|cp|tee|pv)$", name):
         for a in ops:
@@ -327,9 +349,9 @@ def check_segment(name, args, redirs, depth):
 
     check_protected(name, args, flags, ops, redirs)
 
-    if name in SHELLS and "-c" in flags:
-        i = args.index("-c")
-        if i + 1 < len(args):
+    if name in SHELLS:  # -c, or a group of short flags that ends in it (bash -lc "...")
+        i = next((n for n, a in enumerate(args) if a.startswith("-") and not a.startswith("--") and "c" in a), None)
+        if i is not None and i + 1 < len(args):
             check(args[i + 1], depth + 1)
     if name == "eval" and args:
         check(" ".join(args), depth + 1)
@@ -473,6 +495,26 @@ def check_remote_exec(cmd, pipes):
               % (", ".join(sorted(set(bad))) or "an unknown host"))
 
 
+def check_piped_script(pipes, depth):
+    """What a shell reads on stdin never comes back through this hook, so look at the literal text echoed
+    or printed into it (`echo 'rm -rf ~' | bash`), and refuse decoded text (`... | base64 -d | sh`)."""
+    for pipe in pipes:
+        for k in range(1, len(pipe)):
+            name, args = unwrap(pipe[k][0])
+            flags, ops = flags_and_operands(args)
+            if name not in SHELLS or not ("-s" in flags or not ops or ops[0] == "-") \
+                    or any(a.startswith("-") and not a.startswith("--") and "c" in a for a in args):
+                continue
+            for words, _ in pipe[:k]:
+                prev, pargs = unwrap(words)
+                if prev == "base64" and any(a in ("-d", "-D", "--decode") for a in pargs):
+                    block("decoded text piped into %s runs code nobody can read first" % name)
+                if prev in ("echo", "printf"):
+                    for a in pargs:
+                        if not a.startswith("-"):
+                            check(a, depth + 1)
+
+
 def check(cmd, depth=0):
     if depth > MAX_DEPTH or not cmd.strip():
         return
@@ -483,6 +525,7 @@ def check(cmd, depth=0):
         check(inner, depth + 1)
     pipes = pipelines(tokenize(cmd))
     check_remote_exec(cmd, pipes)
+    check_piped_script(pipes, depth)
     for pipe in pipes:
         for words, redirs in pipe:
             name, args = unwrap(words)
@@ -509,6 +552,8 @@ def verdict_for_payload(payload):
         cmd = " ".join(shlex.quote(str(c)) for c in cmd)
     if isinstance(cmd, str):
         return verdict(cmd)
+    if "command" in ti:
+        return "the command is neither a string nor a list; failing closed"
     for key in ("file_path", "path", "notebook_path"):
         p = ti.get(key)
         if isinstance(p, str) and (SECRET.search(p) and not p.endswith(".pub")
