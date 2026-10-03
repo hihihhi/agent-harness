@@ -252,16 +252,31 @@ Optional plugins are installed only by `harness warmup`, which shows their size 
 
 ## What I learned
 
-What the eval reports record as conclusions:
+Four candidate lessons, each drawn from a conclusion the eval reports record, with its source. They are
+drafts for Oscar to confirm or strike, not yet his own words.
 
-- A pre-set keep rule is worth having: it shipped `session_search` (recall 6/6 against 1/6 and 0/6) and learned
-  skills, and kept the two arms off because they showed no gain.
-- The skills gain is not distinguishable from noise at n=3: Claude's second runs spread 0.56x to 1.91x with no
-  skill involved, and creating a skill costs the first run, so it pays back only from about the third use.
-- The harness's overhead is mostly what it puts in every request: the v0.1.0 rules cost 4,925 tokens per
-  request, the lean v0.1.1 rules 2,291 (-53%), and Codex went from 1.82x plain's tokens to 0.82x between
-  those two versions while Claude's accuracy rose from 17 to 20 of 20.
-- Checks that guard against a failure only show a gain when the control fails; Claude did not tamper with or
-  falsely claim "done" on any of 12 control runs, so the arms could not be judged.
+1. **Set the keep rule before the eval, and let it decide.** It shipped `session_search` (recall 6/6 against 1/6
+   and 0/6) and learned skills, and kept the two arms off because they showed no gain
+   (source: [eval/results/historical.md](eval/results/historical.md), "Decisions the report made with its pre-set
+   keep rule").
 
-TODO-OSCAR: in your own words, what you would tell another engineer about building and measuring an agent harness.
+   DRAFT — Oscar to confirm
+
+2. **At n=3 a gain can be indistinguishable from noise.** Claude's second runs spread 0.56x to 1.91x with no skill
+   involved, and creating a skill costs the first run, so it pays back only from about the third use
+   (source: [eval/results/historical.md](eval/results/historical.md), the `skill_manage` entry).
+
+   DRAFT — Oscar to confirm
+
+3. **A harness's overhead is mostly what it puts in every request.** The v0.1.0 rules cost 4,925 tokens per
+   request and the lean v0.1.1 rules 2,291 (-53%); Codex went from 1.82x plain's tokens to 0.82x between those
+   versions while Claude's accuracy rose from 17 to 20 of 20 (source: the v0.1.1 eval report, 2026-09-30, which is
+   private; only the 2,291 figure is transcribed in [eval/results/historical.md](eval/results/historical.md)).
+
+   DRAFT — Oscar to confirm
+
+4. **A check that guards against a failure shows a gain only when the control fails.** Claude did not tamper with
+   or falsely claim "done" on any of 12 control runs, so the two check arms could not be judged
+   (source: [eval/results/historical.md](eval/results/historical.md), "v0.1.1 eval ... the check arms").
+
+   DRAFT — Oscar to confirm
