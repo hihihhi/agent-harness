@@ -10,7 +10,7 @@ you use, in that tool's own format.
 `content/AGENTS.md` is the only rulebook. The installer copies it to where each tool expects
 its instructions (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`, VS Code
 instruction files, Cursor rules, a project `AGENTS.md`). The rules are loaded into every session,
-so they cost tokens every time; they are kept under 120 lines, and anything longer lives in a
+so they cost tokens every time; they are kept to 60 lines (a test enforces it), and anything longer lives in a
 skill or in the knowledge base, where it is loaded only when needed.
 
 At install time the installer appends three things to the rules: your profile's extra rules, a
@@ -170,3 +170,66 @@ other document, so agents fetch just the section they need. See `profiles/exampl
 `harness warmup` builds the knowledge index and, if you agree, installs optional MCP plugins
 listed in the profile: a web `fetch` tool (about 60 MB) and a `playwright` browser (about 400 MB).
 Sizes are shown before anything is downloaded; the total stays under 1 GB.
+
+## Supported tools
+
+Each tool is set up in its own app and, where it runs inside VS Code, there too. It works the same on a
+laptop and on a remote Linux server reached over SSH: install the harness on the machine where the tool runs.
+
+| tool | standalone | inside VS Code |
+|---|---|---|
+| Claude Code | terminal `claude`: rules, memory tools, skills, slash prompts, guard hook | the extension reads the same user settings |
+| Codex | terminal `codex`: `AGENTS.md`, memory tools, skills | the IDE extension shares the same `~/.codex` configuration |
+| GitHub Copilot | (VS Code only) | instructions, prompt files and memory tools in your VS Code user settings |
+| Cursor | the Cursor app: rules and memory tools | Cursor is itself a VS Code build, so this is the same install |
+| Gemini CLI | terminal `gemini`: `GEMINI.md`, memory tools, skills | Gemini Code Assist's agent mode reads the same `~/.gemini` settings |
+| Claude desktop app | memory and knowledge tools | not applicable |
+| JupyterLab (Jupyter AI) | rules for notebook assistants | not applicable |
+| anything else that reads `AGENTS.md` | the shared rules file | the same |
+
+Skills are installed once in `~/.agents/skills/`, which Codex, Gemini CLI, Cursor and Copilot read; Claude
+Code gets a link to the same folder. Cursor reads `.cursor/mcp.json` in every open folder as well as in your
+home, so a workspace that opens your home folder itself loads the memory tools twice; open a project
+folder instead.
+
+## Privacy
+
+Everything stays on your machine. Memory, lessons, task state and the knowledge index are plain files in
+`~/.agent-harness` (override with `HARNESS_HOME`). Nothing is uploaded by the harness and there is no
+telemetry. Your AI tool still sends your prompts and the context it reads to its own provider, as before;
+the harness reduces how much it reads, but not where it goes. The rules tell agents never to store secrets
+in memory, and the guard blocks reading SSH keys, cloud credentials and `.env` files through the shell.
+Optional plugins are installed only by `harness warmup`, which shows their size first.
+
+## The guard against a wider corpus, and a held-out set
+
+**The corpus (in-sample).** The guard's tests carry a representative set of dangerous and safe commands taken
+from the author's private shell-hook test suite (352 cases extracted, paths made neutral):
+[tests/test_guard_cases.py](../tests/test_guard_cases.py). A one-off comparison against that suite found 105
+disagreements. It counted 24 of them as gaps, now fixed; the repository pins 21 of those as commands
+(`FORMER_BYPASSES`: `rm${IFS}-rf${IFS}/`, `rm -rf ${HOME:?}`, `bash -lc "rm -rf ~"`, `echo 'rm -rf ~' | bash`,
+`rsync --delete` into home, `mv ~/Documents` away, `dd of=/etc/hosts`, ...) and the non-string-command fix as
+`TestPayloads`; the rest of the 24 cannot be listed from here. The other 81 were recorded, not fixed:
+
+| remaining disagreements | cases | verdict |
+|---|---|---|
+| the author's own machine policy: network and VPN control, macOS system tools, the author's own agent settings | 39 | out of scope for a catastrophic-command guard |
+| the harness is stricter (all `sudo`, SSH key flags, `find ..`, text that looks like a fork bomb) | 14 | by design; the fork-bomb text in a quoted note is a known false positive |
+| open gaps: targets computed by `$(...)`, inline code in another interpreter, login-script and cron persistence, `find \| xargs` | 18 | 16 representative commands pinned as expected failures in the tests |
+| the private suite asks about single files and project paths the harness allows (`rm ~/Desktop/note.txt`) | 9 | by design |
+| an empty `{}` payload | 1 | cannot be told from a non-shell tool |
+
+The counts come from that one-off comparison (the private test file is not in this repository). A review on
+2026-10-03 then found that a glob after a `cd` into home or root (`cd ~ && rm -rf *`, `pushd ~ && ...`,
+`cd / && ...`), `command -p rm -rf ~` and `xargs rm -rf <<< ~` got through. The guard now resolves a relative
+operand against a `cd`/`pushd` earlier on the same line, skips the flags of `command`/`exec`/`builtin`, and
+reads a here-string into `xargs` as operands; those 13 commands joined the corpus, which is now 99 dangerous
+commands (all blocked) and 104 safe ones (all allowed). Because the guard was fixed against it, the corpus
+measures fit, not generalisation.
+
+**The held-out set.** [tests/test_guard_heldout.py](../tests/test_guard_heldout.py) holds 45 dangerous commands
+and 20 safe controls written fresh on 2026-10-03, not taken from the corpus (a test checks that). Result:
+**40 of 45 dangerous commands blocked (89%), 20 of 20 safe controls allowed**; 39 of 45 before the cd fix.
+The 5 misses are pinned as expected failures: `rsync --delete` into a destination spelled with `$HOME`, `echo ~
+| xargs rm -rf` (piped input to `xargs`), `truncate` of a system file, and inline Python and Perl code. Run
+`python3 tests/test_guard_heldout.py --rate` to reproduce the rate.

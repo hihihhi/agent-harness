@@ -23,6 +23,7 @@ code names it together with a delete or write call. Reading it is untouched. No 
 """
 import json
 import os
+import posixpath
 import re
 import shlex
 import sys
@@ -90,6 +91,10 @@ def protected_roots():
 
 
 _CWD = [None]   # the directory a `cd` earlier in the same command moved to (None: the hook's own cwd)
+# The same, as written (`~`, `$HOME`, `/Users`), for the path classes: `cd ~ && rm -rf *` is `rm -rf ~/*`.
+# None: no cd yet, or one whose target cannot be read from the text (`cd $DIR`, `cd -`, a relative cd from the
+# hook's own cwd); a relative operand is then judged as written, as before.
+_DIR = [None]
 
 
 def protected(p, roots):
@@ -163,7 +168,12 @@ def pipelines(tokens):
         t = tokens[i]
         if t and set(t) <= punct:
             if "(" not in t and ("<" in t or ">" in t):
-                # redirect: the next word is its target, not an operand
+                # redirect: the next word is its target, not an operand; except a here-string into xargs,
+                # which becomes the command's operands (`xargs rm -rf <<< DIR` is `rm -rf DIR`)
+                if t == "<<<" and i + 1 < len(tokens) and any(os.path.basename(w) == "xargs" for w in words):
+                    words.append(tokens[i + 1])
+                    i += 2
+                    continue
                 if i + 1 < len(tokens):
                     redirs.append(tokens[i + 1])
                     i += 1
@@ -189,6 +199,9 @@ def unwrap(words):
         w = words[i]
         if w in KEYWORDS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w):
             i += 1
+            if w in ("command", "exec", "builtin"):     # `command -p rm ...`, `exec -a name rm ...`
+                while i < len(words) and words[i].startswith("-"):
+                    i += 2 if words[i] == "-a" else 1
             continue
         base = os.path.basename(w)
         if base in ("env", "nice", "ionice", "stdbuf", "timeout", "xargs", "caffeinate"):
@@ -267,6 +280,44 @@ def critical_path(p):
     return None
 
 
+def _norm(p):
+    """normpath that keeps the anchor: `~/..` and `$HOME/../x` climb above a place the text cannot name, so they
+    count as the root (normpath would turn them into a harmless-looking relative path)."""
+    n = posixpath.normpath(p)
+    return n if n.startswith(("/", "~", "$")) else "/"
+
+
+def after_cd(p):
+    """`p` joined onto the directory an earlier `cd` on the line moved to, or None when there was none or `p`
+    does not depend on it."""
+    if _DIR[0] is None or not p or p.startswith(("/", "~", "$", "`", "-")) or "$(" in p:
+        return None
+    return _norm(posixpath.join(_DIR[0], p))
+
+
+def critical(p):
+    """critical_path(p), also for a relative operand after a `cd` on the same line."""
+    why = critical_path(p)
+    if why:
+        return why
+    q = after_cd(p)
+    why = critical_path(q) if q else None
+    return "after cd %s: %s" % (_DIR[0], why) if why else None
+
+
+def track_cd(name, ops):
+    if name not in ("cd", "pushd"):
+        return
+    d = ops[0] if ops else "~"
+    if d == "-" or d.startswith("+") or "`" in d or "$(" in d or (
+            d.startswith("$") and not re.match(r"^\$(HOME|\{HOME\})(/|$)", d)):
+        _DIR[0] = None
+    elif d.startswith(("/", "~", "$")):
+        _DIR[0] = _norm(d)
+    elif _DIR[0] is not None:
+        _DIR[0] = _norm(posixpath.join(_DIR[0], d))
+
+
 def secret_path(tok, cmd_name):
     t = tok.split("=", 1)[1] if tok.startswith("-") and "=" in tok else tok
     if t.endswith(".pub"):
@@ -294,7 +345,7 @@ def check_segment(name, args, redirs, depth):
             block("rm --no-preserve-root")
         if "--recursive" in flags or has_short(flags, "rR"):
             for op in ops:
-                why = critical_path(op)
+                why = critical(op)
                 if why:
                     block("rm -r on %s (%s)" % (op, why))
         elif risky_name and any(a.startswith("$") for a in args):  # R=rm; F=-rf; $R $F ~
@@ -305,7 +356,7 @@ def check_segment(name, args, redirs, depth):
 
     if name in ("chmod", "chown", "chgrp") and ("--recursive" in flags or has_short(flags, "R")):
         for op in ops[1:]:
-            why = critical_path(op)
+            why = critical(op)
             if why:
                 block("%s -R on %s (%s)" % (name, op, why))
 
@@ -313,7 +364,14 @@ def check_segment(name, args, redirs, depth):
         for a in args:
             if a.startswith("-") or a in ("(", "!"):
                 break
-            why = critical_path(a) if a not in (".", "./") else None
+            if a in (".", "./"):
+                # `find .` stays allowed (it was exempt before cd tracking), unless the cd went to the home
+                # directory or above: there a folder one level down is itself critical (`cd ~ && find . -delete`),
+                # while `cd ~/proj && find . -name '*.pyc' -delete` is the everyday clean-up
+                q = after_cd(a)
+                why = critical_path(q) if q and critical_path(q + "/x") else None
+            else:
+                why = critical(a)
             if why:
                 block("find ... -delete on %s (%s)" % (a, why))
 
@@ -325,12 +383,12 @@ def check_segment(name, args, redirs, depth):
                 block("dd onto a system file (%s)" % a[3:])
     if name == "rsync" and any(a == "--del" or a.startswith(("--delete", "--remove-source")) for a in args):
         for op in ops[-1:]:  # the destination: --delete empties it
-            why = critical_path(op.split(":", 1)[-1]) if "$" not in op else None
+            why = critical(op.split(":", 1)[-1]) if "$" not in op else None
             if why:
                 block("rsync --delete into %s (%s)" % (op, why))
     if name == "mv":
         for op in ops[:-1]:  # a source: moving it away empties its place
-            why = None if "$" in op or "`" in op else critical_path(op)
+            why = None if "$" in op or "`" in op else critical(op)
             if why:
                 block("mv of %s (%s)" % (op, why))
     if re.match(r"^(mkfs(\..+)?|mke2fs|mkswap|mkdosfs|mkntfs|newfs(_.+)?|wipefs|blkdiscard"
@@ -348,6 +406,7 @@ def check_segment(name, args, redirs, depth):
         check_git(args)
 
     check_protected(name, args, flags, ops, redirs)
+    track_cd(name, ops)
 
     if name in SHELLS:  # -c, or a group of short flags that ends in it (bash -lc "...")
         i = next((n for n, a in enumerate(args) if a.startswith("-") and not a.startswith("--") and "c" in a), None)
@@ -534,7 +593,7 @@ def check(cmd, depth=0):
 
 def verdict(cmd):
     """Return None if allowed, else the reason."""
-    _CWD[0] = None
+    _CWD[0] = _DIR[0] = None
     try:
         check(cmd)
     except Blocked as e:

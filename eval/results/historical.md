@@ -46,6 +46,26 @@ Decisions the report made with its pre-set keep rule:
 Wrong answers on the 20 questions were mostly one hard procedure question (the model used a table-layer
 call where the docs gave another) and, on v0.1.1, two single misses.
 
+## v0.1.1 eval (190 runs + 53 runs of the released build): accuracy and tokens
+
+The v0.1.1 report's headline table, transcribed: 20 questions with regex graders and an 8-turn cap (the v0.1.0
+eval's set), an earlier run. "Batch" is the A/B batch inside the 190 runs; "released build" is the 53 runs of the tagged v0.1.1
+after the review fixes. Token ratios are the paired median over the 20 questions (harness run / plain run on
+the same question), because plain itself got cheaper between the v0.1.0 and v0.1.1 runs (median 95.7k to 69.7k tokens).
+
+| | v0.1.0 | v0.1.1 batch | v0.1.1 released build |
+|---|---|---|---|
+| Claude with the harness, correct | 17/20 | 19/20 | 20/20 |
+| Claude plain, correct | 17/20 | 17/20 | (the batch's plain runs) |
+| Codex with the harness, correct | 18/20 | 18/20 | 18/20 |
+| Codex plain, correct | 17/20 | 18/20 | - |
+| Claude, paired median tokens, harness / plain | 1.76 | 1.24 | 1.08 (against the batch's plain median) |
+| Codex, paired median tokens, harness / plain | 1.82 | 0.82 | - |
+| Harness rules alone, tokens per request (no-tool probe) | 4,925 | 2,291 | 2,291 |
+
+The same v0.1.1 build scored 20/20 here and 18/20 when the v0.2 eval re-ran it on another day (table above):
+with one run per question, a difference of two answers is inside the noise.
+
 ## v0.1.1 eval (190 runs + 53 runs of the released build): the check arms
 
 Six coding tasks, two repetitions each, three arms (Claude with the harness): `ctl` (neither check on),
