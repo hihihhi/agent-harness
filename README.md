@@ -126,6 +126,8 @@ against Claude plus this tree's harness in a throwaway home, neither with your o
 attempt (2026-10-03, model `claude-opus-5[1m]` as reported by the CLI) failed at the CLI's login before any
 model call: 6 runs, 0 tokens, not retried
 ([record](eval/results/public-synthetic-2026-10-03-claude-opus-5-1m-not-run.json)).
+No rerun is planned: as of 2026-10-05 I am not spending Claude or OpenAI usage on this project's experiments.
+The set and the runner stay, so anyone with those tools can run it.
 
 ### The command guard
 
