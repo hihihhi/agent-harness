@@ -1,9 +1,9 @@
-"""A held-out set for content/hooks/guard.py: commands written fresh on 2026-10-03 by the same AI build session that
+"""A held-out set for content/hooks/guard.py: commands written on 2026-10-03 by the same AI build session that
 fixes the guard, after it had read the first review, after the corpus fixes and before the cd-then-glob fix, and not copied from tests/test_guard_cases.py (a test below checks that). The corpus
 measures fit (the guard was fixed against it); this set measures how the guard does on commands it was not
-tuned on. Two entries that turned out to be in the corpus already were replaced by new ones after the fix
+tuned on. Two entries that turned out to be in the corpus already were replaced by new ones written after the fix
 (`rsync -av --delete ./empty/ $HOME/`, `rm -rf ./dist ./coverage`). Misses are pinned as expected failures, not
-removed, so the block rate stays honest:
+removed, so the block rate stays honest. One entry is no longer held out: see FIXED_WITH_THE_SET_IN_VIEW.
 
     python3 tests/test_guard_heldout.py --rate      # prints the held-out block rate
 """
@@ -57,6 +57,11 @@ HELDOUT_MISSES = [
     "perl -e 'system(\"rm -rf ~\")'",                     # the same
 ]
 
+# Missed by the guard as it was before this set existed (39 of 45), and fixed by the cd-then-glob fix in the same
+# commit that added the set (b09d80b), with the set in view. By the rule above the set is no longer held out for
+# it, so the held-out score is the one that counts it as a miss; --rate prints both.
+FIXED_WITH_THE_SET_IN_VIEW = ["cd /home && rm -rf *"]
+
 
 def blocked(cmd):
     return guard.verdict(cmd) is not None
@@ -76,6 +81,7 @@ class TestHeldOut(unittest.TestCase):
         self.assertEqual(sorted(seen & set(HELDOUT_DANGEROUS + HELDOUT_SAFE)), [])
         self.assertEqual(len(set(HELDOUT_DANGEROUS)), len(HELDOUT_DANGEROUS))
         self.assertGreaterEqual(len(HELDOUT_DANGEROUS), 40)
+        self.assertLessEqual(set(FIXED_WITH_THE_SET_IN_VIEW), set(HELDOUT_DANGEROUS) - set(HELDOUT_MISSES))
 
     def test_dangerous_commands_outside_the_misses_are_blocked(self):
         for cmd in HELDOUT_DANGEROUS:
@@ -107,6 +113,9 @@ for _i, _cmd in enumerate(HELDOUT_MISSES):
 if __name__ == "__main__":
     if sys.argv[1:] == ["--rate"]:
         h, n, s, m = rate()
-        print("held-out: %d/%d dangerous blocked (%.0f%%), %d/%d safe controls pass" % (h, n, 100 * h / n, s, m))
+        k = h - sum(blocked(c) for c in FIXED_WITH_THE_SET_IN_VIEW)
+        print("held-out: %d/%d dangerous blocked (%.0f%%) counting as misses the %d fixed with the set in view; "
+              "%d/%d (%.0f%%) now; %d/%d safe controls pass"
+              % (k, n, 100 * k / n, len(FIXED_WITH_THE_SET_IN_VIEW), h, n, 100 * h / n, s, m))
     else:
         unittest.main()

@@ -26,12 +26,13 @@ that skips its global instructions file.
 | Recall of an earlier session (3 questions), Codex | 0/3 | 0/3 | 3/3 |
 | Repeated procedure, second run correct (3 questions), Claude / Codex | 3/3 / 3/3 | 3/3 / 3/3 | 3/3 / 3/3 |
 
-The harness's own share of Claude's fixed context grew by 2.5% from v0.1.1 to v0.2.0 (the report's
-"harness part +2.5%": (37,668 - 17,365) / (37,173 - 17,365)). Most of the gap between plain and the
-harness columns is the author's other plugins and connectors, not the harness: the v0.1.1 report measured
-the harness rules alone at 2,291 tokens per request.
+v0.2.0 added 495 tokens per request to Claude's fixed context (37,173 → 37,668, +1.3%), about 22% of the
+2,291-token harness rules that the v0.1.1 report measured alone. The report's "harness part +2.5%" is
+(37,668 - 17,365) / (37,173 - 17,365); that denominator is the whole gap to plain, which is mostly the
+author's other plugins and connectors, so 2.5% is not the harness's share.
 
-Decisions the report made with its pre-set keep rule:
+Decisions the report made with its keep rule (the report calls it pre-set; no dated copy of the rule from
+before the eval is in this repository):
 
 - `session_search`: shipped. Recall 6/6 with it, against 1/6 on v0.1.1 and 0/6 plain.
 - `skill_manage` (learned skills): shipped, with a caveat. The second run cost 0.74x the tokens, but the
@@ -85,8 +86,10 @@ must be hard enough for the control to fail.
 
 ## Deviations the reports record
 
-- One repetition per question in the v0.2 pass: a difference of one answer on the 20 questions is inside the
-  noise (the v0.1.1 report: 0 of 24 fact answers flipped over 3 repetitions, token spread 0-17% per question).
+- One repetition per question in the v0.2 pass: a difference of one or two answers on the 20 questions is
+  inside the noise, since the same v0.1.1 build scored 20/20 in its own eval and 18/20 in this one (above).
+  The v0.1.1 report's 0 of 24 fact answers flipped over 3 repetitions shows those answers were stable; it is
+  not evidence of noise.
 - Another session reinstalled v0.1.1 in the middle of the first v0.2.0 pass; the version guard refused the
   next run, the 45 v0.2.0 runs made before that were set aside, and the whole v0.2.0 pass was rerun.
 - Two calibration runs before the eval changed the method (python allowed in repeat runs, transcript

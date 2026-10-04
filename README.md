@@ -1,6 +1,7 @@
 # agent-harness
 
-**One standard-library install that gives seven AI coding tools the same rules, memory, retrieval, lessons and command guard.**
+**One standard-library install that gives Claude Code shared rules, memory, retrieval, lessons and a command guard, and six
+other AI coding tools the rules and/or memory tools each can take ([which tool gets what](docs/how-it-works.md#supported-tools)).**
 
 ```console
 $ harness --home $DEMO_HOME install --dry-run --tools claude-code
@@ -44,8 +45,8 @@ restores them all.
 
 | evidence | result | qualifier and source |
 |---|---|---|
-| Recall of an earlier session, harness v0.1.1 → v0.2.0 (same account setup; v0.2.0 adds `session_search`) | **Claude 1/3 → 3/3, Codex 0/3 → 3/3** | historical, **private corpus**, one run per question. n=3 is not significant per tool (Fisher exact p = 0.40, 0.10; pooled 1/6 → 6/6, p = 0.015). Plain's 0/3 is a floor: it cannot read past sessions. [eval/results/historical.md](eval/results/historical.md) |
-| Command guard, held out | **40/45 dangerous commands blocked (89%), 20/20 safe controls allowed** | written fresh by the same build session (2026-10-03, after reading the first review), not from the corpus it was fixed against (in-sample: 105/105, 108/108). [tests/test_guard_heldout.py](tests/test_guard_heldout.py) |
+| Recall of an earlier session, harness v0.1.1 → v0.2.0 (same account setup; v0.2.0 adds `session_search`) | **Claude 1/3 → 3/3, Codex 0/3 → 3/3** | historical, **private corpus**, one run per question. n=3 is not significant per tool (Fisher exact p = 0.40, 0.10). Pooled 1/6 → 6/6 gives p = 0.015, but both tools answered the same 3 questions, so the six results are not independent: suggestive only. Plain's 0/3 is a floor: it cannot read past sessions. [eval/results/historical.md](eval/results/historical.md) |
+| Command guard (Claude Code), held out | **39/45 dangerous commands blocked (87%), 20/20 safe controls allowed**, with the guard as it was before the set existed; 40/45 (89%) after one fix made with the set in view | written by the same build session (2026-10-03, after reading the first review), not from the corpus it was fixed against (in-sample: 105/105, 108/108). [tests/test_guard_heldout.py](tests/test_guard_heldout.py) |
 | Tests, Python 3.9 | **270 passed**, 2 skipped, 21 expected failures (pinned guard gaps and held-out misses) | `python3 -m pytest -q tests eval`. On 3.11: 271 passed, 1 skipped (a TOML check needs `tomllib`; the other skip is a live check that needs `HARNESS_LIVE=1`) |
 
 Not everything gained: Claude with the harness used 1.24x plain's tokens in the v0.1.1 eval, two of the seven tools
@@ -63,13 +64,14 @@ with the others. They forget everything between sessions, re-read whole files, c
 checking it, and repeat the same mistakes. Setting up seven tools by hand, and keeping them consistent, is
 tedious and rarely kept up.
 
-agent-harness installs one set of working rules, one shared memory, a searchable knowledge base, a safety
-guard and a few skills into every tool it finds, in each tool's own format, with a backup and an uninstall.
+agent-harness installs one set of working rules, one shared memory, a searchable knowledge base and a few skills
+into every tool it finds, as far as each tool supports them, in each tool's own format, with a backup and an
+uninstall; the safety guard goes into Claude Code only.
 
 ## Approach (methods and algorithms)
 
 - **One source of truth, many adapters.** An adapter per tool writes `content/AGENTS.md` where that tool reads
-  its instructions, registers the MCP server and the guard hook, and records what it wrote for the uninstall.
+  its instructions, registers the MCP server (and, for Claude Code, the guard hook), and records what it wrote for the uninstall.
 - **Partial retrieval.** Documents are split into sections at their headings and indexed in SQLite FTS5 with
   BM25 ranking (a pure-Python fallback exists). The rules carry a compact index of section ids; the agent calls
   `kb_get(id)` for one section and `kb_search(query)` only when nothing in the index fits.
@@ -83,8 +85,9 @@ guard and a few skills into every tool it finds, in each tool's own format, with
   `eval`, `$(...)` and heredocs that feed a shell, resolves a relative path against a `cd` earlier on the same
   line, classifies each target (root, home, a top-level home folder, a variable that may be empty, `..`), and
   fails closed on a payload it cannot parse. Standard library only, no subprocesses.
-- **Ship by a pre-set keep rule:** accuracy no worse, a measurable gain, token overhead within +15%, written
-  before the eval; parts that fail stay off by default.
+- **Ship by a keep rule:** accuracy no worse, a measurable gain, token overhead within +15%; parts that fail stay
+  off by default. The private eval reports call it pre-set, but no committed record here shows it predates the
+  2026-09-30 eval (its thresholds first appear in `eval/report.py` on 2026-10-03).
 
 ## Results
 
@@ -112,8 +115,9 @@ column is a floor, not a competitor; the harness's own effect is v0.1.1 against 
   p = 0.015, though both tools answered the same 3 questions. Suggestive, not established.
 - **Accuracy** differences of one or two answers on 20 questions are noise: one run per question, and the same
   v0.1.1 build scored 20/20 in its own eval and 18/20 here.
-- **Tokens.** The harness's share of Claude's fixed context grew +2.5% from v0.1.1 to v0.2.0; most of the gap to
-  plain is the author's other plugins (the harness rules alone: 2,291 tokens per request). In the v0.1.1 eval
+- **Tokens.** v0.2.0 added 495 tokens per request to Claude's fixed context (37,173 → 37,668), about 22% of the
+  2,291-token harness rules; the keep rule's measure, the paired median token ratio against v0.1.1, was 1.04
+  (limit 1.15). Most of the gap to plain is the author's other plugins, not the harness. In the v0.1.1 eval
   the paired median token ratio, harness over plain, was 1.24 for Claude and 0.82 for Codex, down from 1.76
   and 1.82 for v0.1.0 (same file, "accuracy and tokens").
 - **Shipped off by the keep rule:** `memory_snapshot` and `skill_nudge` (no gain); `run_checks` and `check_guard`
@@ -131,14 +135,16 @@ The set and the runner stay, so anyone with those tools can run it.
 
 ### The command guard
 
-**Held out** (45 dangerous commands, 20 safe controls, written fresh on 2026-10-03 by the same AI build session
-that fixed the guard, after it had read the first review and before the cd fix): **40/45 blocked (89%)**,
-20/20 allowed; 39/45 before the cd fix. The 5 misses are pinned as expected failures: `rsync --delete` into
-`$HOME/`, `echo ~ | xargs rm -rf`, `truncate` of a system file, inline Python, inline Perl. Reproduce:
+**Held out** (45 dangerous commands, 20 safe controls, written on 2026-10-03 by the same AI build session that
+fixed the guard, after it had read the first review and before the cd fix; two entries were replaced after it):
+**39/45 blocked (87%)**, 20/20 allowed, with the guard as it was before the set existed. The commit that added
+the set (b09d80b) also fixed one of its commands, `cd /home && rm -rf *`, so the set is no longer held out for
+that one; counting it, 40/45 (89%). The 5 remaining misses are pinned as expected failures: `rsync --delete` into
+`$HOME/`, `echo ~ | xargs rm -rf`, `truncate` of a system file, inline Python, inline Perl. Reproduce (prints both rates):
 `python3 tests/test_guard_heldout.py --rate`. **In-sample** ([tests/test_guard_cases.py](tests/test_guard_cases.py),
-the set the guard was fixed against): 105/105 blocked, 108/108 allowed, which measures fit. It includes 21 former
-bypasses and 19 commands two reviews found, such as `cd ~ && rm -rf *`, `command -p rm -rf ~`,
-`bash <(echo 'rm -rf ~')` and `git push --mirror`. Details and the
+the set the guard was fixed against): 105/105 blocked, 108/108 allowed, which measures fit. It includes 19 commands two
+reviews found, such as `cd ~ && rm -rf *`, `command -p rm -rf ~`,
+`bash <(echo 'rm -rf ~')` and `git push --mirror`; a separate list of 21 former bypasses is all blocked too. Details and the
 disagreement table: [docs/how-it-works.md](docs/how-it-works.md#the-guard-against-a-wider-corpus-and-a-held-out-set).
 
 ## How to run
@@ -164,7 +170,8 @@ bash scripts/check.sh          # tests, secret scan and the demo; needs pytest; 
 ```
 
 The eval: [eval/README.md](eval/README.md). The CI workflow (`.github/workflows/ci.yml`) runs the tests, the
-secret scan and the demo; it has not run on GitHub yet.
+secret scan and the demo on Python 3.9 and 3.12 for every push to main; it has run on GitHub and passed
+(latest checked: 4b6bbef, 2026-10-04).
 
 ## Architecture
 
@@ -183,7 +190,7 @@ flowchart LR
     MCP --> INSTALL
     INSTALL --> TOOLS["Claude Code, Codex, Copilot, Cursor,<br/>Gemini CLI, Claude desktop, JupyterLab"]
     TOOLS -- "kb_get, mem_*, lesson_*,<br/>session_search, skill_manage, state_*" --> MCP
-    TOOLS -- "PreToolUse: every shell command" --> GUARD
+    TOOLS -- "Claude Code only, PreToolUse:<br/>every shell command" --> GUARD
     subgraph store["~/.agent-harness, local files, no telemetry"]
         MEM["memory + lessons<br/>JSON files"]
         IDX[("index.sqlite<br/>FTS5: knowledge + sessions")]
@@ -217,11 +224,11 @@ the build contract: [CONTRACT.md](CONTRACT.md).
   string) is blocked, not waved through: an agent that hits a false block can ask the human, while a missed
   `rm -rf ~` cannot be undone. The cost is false positives (all `sudo`, fork-bomb text inside a quoted note),
   and it is a seat belt, not a sandbox: 16 known gaps and 5 held-out misses are pinned in the tests.
-- **One rules file for seven tools.** Each adapter translates `content/AGENTS.md`, so the tools cannot drift
+- **One rules file for every tool that takes one.** Each adapter translates `content/AGENTS.md`, so the tools cannot drift
   apart and a fix lands everywhere at once. The rules are paid for in every request, so a test caps them at 60
   lines; longer guidance lives in skills. The cost is a lowest common denominator: tool-specific features go
   through the adapters.
-- **Measured, and not adopted.** Four candidates failed the pre-set keep rule and ship off by default (Results).
+- **Measured, and not adopted.** Four candidates failed the keep rule and ship off by default (Results).
 
 ## Limits
 
@@ -235,26 +242,28 @@ the build contract: [CONTRACT.md](CONTRACT.md).
   interpreter, login-script and cron persistence, piped input to `xargs`, and a glob after `cd` into a folder
   named by a variable (`cd $DIR && rm -rf *` is judged as written). `sudo` is blocked outright.
 - **`--home DIR` and `HOME=DIR` differ:** only `HOME=DIR` installs VS Code extensions (a download) into the folder.
-- **Not run in CI yet**, and the packaging was checked offline only: the wheel was built and installed with
-  `pip install --no-index --no-deps --no-build-isolation --target DIR .`; `pipx` and `uvx` were not available.
+- **Packaging was checked offline only:** the wheel was built and installed with Python 3.11 (setuptools 83) by
+  `pip install --no-index --no-deps --no-build-isolation --target DIR .`; it needs setuptools>=61 (macOS's
+  stock Python 3.9 with setuptools 58 installs an empty `UNKNOWN-0.0.0` that way). `pipx` and `uvx` were not available.
 
 ## What I learned
 
-Each lesson is drawn from a conclusion an eval record states, with its source; all five confirmed by Oscar on 2026-10-03.
+Each lesson is drawn from a conclusion an eval record states, with its source; all five confirmed by Oscar on 2026-10-03,
+with their evidence claims tightened to the sources on 2026-10-05.
 
-1. **Set the keep rule before the eval, and let it decide.** It shipped `session_search` (recall 6/6 against 1/6
-   and 0/6) and learned skills, and kept the two arms off because they showed no gain
-   (source: [eval/results/historical.md](eval/results/historical.md), "Decisions the report made with its pre-set
-   keep rule").
+1. **Set the keep rule before the eval, and let it decide.** It shipped `session_search` (recall 6/6 against 1/6 and 0/6) and learned skills,
+   and kept the two arms off because they showed no gain. The reports call the rule pre-set; no committed record
+   here shows it predates the eval (source: [eval/results/historical.md](eval/results/historical.md), "Decisions
+   the report made with its keep rule").
 
 2. **At n=3 a gain can be indistinguishable from noise.** Claude's second runs spread 0.56x to 1.91x with no skill
-   involved, and creating a skill costs the first run, so it pays back only from about the third use
+   involved, and creating a skill costs the first run (Codex: 1.73M tokens against 1.34M)
    (source: [eval/results/historical.md](eval/results/historical.md), the `skill_manage` entry).
 
 3. **A harness's overhead is mostly what it puts in every request.** The v0.1.0 rules cost 4,925 tokens per
    request and the lean v0.1.1 rules 2,291 (-53%). In the v0.1.1 eval Codex went from 1.82x plain's tokens to
-   0.82x, and Claude with the harness from 17 to 19 (batch) and 20 (released build) of 20; the v0.2 eval's
-   18/20 for v0.1.1 is a later run of the same build (source: [eval/results/historical.md](eval/results/historical.md),
+   0.82x and Claude from 1.76x to 1.24x; accuracy moved by no more than the noise of one run per question
+   (source: [eval/results/historical.md](eval/results/historical.md),
    "v0.1.1 eval ... accuracy and tokens").
 
 4. **A check that guards against a failure shows a gain only when the control fails.** Claude did not tamper with

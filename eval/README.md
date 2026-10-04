@@ -7,7 +7,7 @@ the fixed context each request carries, recall of an earlier session, and reuse 
 | file | what |
 |---|---|
 | `runner.py` | runs one CLI session per question and condition, parses tokens and tool calls, grades, appends to `results.jsonl`; keeps one run from leaving anything for the next |
-| `report.py` | re-grades and prints the tables; `--v02` applies the pre-set keep rule part by part |
+| `report.py` | re-grades and prints the tables; `--v02` applies the keep rule part by part |
 | `code_tasks.py` | six small coding projects with a hidden test and a bait for a false "done" or a tampered test |
 | `questions/synthetic.json` | the public question set: 20 questions with graders and answer keys (SYNTHETIC) |
 | `corpus/` | the SYNTHETIC documentation (`docs/`) and data (`data/orders.csv`) the questions are about |

@@ -230,9 +230,11 @@ commands (all blocked) and 108 safe ones (all allowed). Because the guard was fi
 measures fit, not generalisation.
 
 **The held-out set.** [tests/test_guard_heldout.py](../tests/test_guard_heldout.py) holds 45 dangerous commands
-and 20 safe controls written fresh on 2026-10-03 by the same AI build session that fixed the guard, after it
-had read the first review and before the cd fix; none is taken from the corpus (a test checks that). Result:
-**40 of 45 dangerous commands blocked (89%), 20 of 20 safe controls allowed**; 39 of 45 before the cd fix.
-The 5 misses are pinned as expected failures: `rsync --delete` into a destination spelled with `$HOME`, `echo ~
+and 20 safe controls written on 2026-10-03 by the same AI build session that fixed the guard, after it had
+read the first review and before the cd fix (two entries were replaced after it); none is taken from the corpus
+(a test checks that). Result: **39 of 45 dangerous commands blocked (87%), 20 of 20 safe controls allowed**,
+with the guard as it was before the set existed. The commit that added the set also fixed one of its commands,
+`cd /home && rm -rf *`, so the set is no longer held out for that one; counting it, 40 of 45 (89%).
+The 5 remaining misses are pinned as expected failures: `rsync --delete` into a destination spelled with `$HOME`, `echo ~
 | xargs rm -rf` (piped input to `xargs`), `truncate` of a system file, and inline Python and Perl code. Run
-`python3 tests/test_guard_heldout.py --rate` to reproduce the rate.
+`python3 tests/test_guard_heldout.py --rate` to reproduce both rates.
