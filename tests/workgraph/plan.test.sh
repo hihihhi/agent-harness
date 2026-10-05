@@ -478,8 +478,11 @@ PATH="$T/stub:$PATH" "$PLAN" run t --accept-risks --workers 1 --max-rounds 2 >/d
 echo "== red team: signal deaths are readable evidence =="
 fresh <<'EOF'
 ## goal: test
-- [ ] 1. killed | gate: sh -c 'kill -9 $$'
+- [ ] 1. killed | gate: kill -9 $$
 EOF
+# The gate kills ITS OWN process. It was `sh -c 'kill -9 $$'`, which kills an inner shell: on macOS
+# /bin/sh (bash) hands its process to that command, so the death read as -9; on Linux /bin/sh is dash,
+# which keeps its own process and reports the child as exit 137. That tested a shell, not plan.
 "$PLAN" gate t 1 >/dev/null 2>&1
 has "a negative exit code is recorded" "$(cat plan/t.md)" "exit -9"
 "$PLAN" gate t 1 >/dev/null 2>&1
