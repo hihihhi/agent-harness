@@ -43,7 +43,8 @@ class RoutingInstall(Base):
         quick = I.load_toml((self.home / ".codex" / "agents" / "harness-quick.toml").read_text())
         deep = I.load_toml((self.home / ".codex" / "agents" / "harness-deep.toml").read_text())
         self.assertEqual((quick["model"], quick["model_reasoning_effort"]), ("m-small", "low"))
-        self.assertEqual((deep["model"], deep["model_reasoning_effort"]), ("m-flagship", "high"))
+        self.assertNotIn("model", deep)                     # Codex's own default: not pinned
+        self.assertEqual(deep["model_reasoning_effort"], "high")
         self.assertEqual(frontmatter((self.home / ".claude" / "agents" / "harness-deep.md").read_text())["effort"], "high")
 
     def test_update_follows_a_user_override(self):

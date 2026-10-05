@@ -70,21 +70,22 @@ def codex_configured(home: Path) -> Optional[str]:
 
 
 def pick_codex(sel: str, models: List[dict], configured: Optional[str], words: List[str]) -> (Optional[dict], str):
+    """`default` is what Codex itself would run: the user's config.toml model, else NOTHING pinned. The model list
+    holds only the picker's models; the account's actual default can be absent from it (2026-10-06: Codex ran
+    gpt-5.6-sol, the list held only older ones, and "first in the picker" sent the deep tier to an older model)."""
     by_slug = {m["slug"]: m for m in models}
-    default = by_slug.get(configured) if configured else None
-    if default is None and models:
-        default = models[0]
+    default = (by_slug.get(configured) or {"slug": configured}) if configured else None
+    dwhy = "your config.toml model" if configured else "Codex's own default (not pinned)"
     if sel == "fast":
         for m in models:
             if any(w in (m.get("description") or "").lower() for w in words):
                 return m, f"fast: '{m.get('description')}'"
-        return default, "fast: none described as fast, so the default"
+        return default, "fast: none described as fast, so " + dwhy
     if sel == "default":
-        why = "your config.toml model" if configured and configured in by_slug else "first in your model picker"
-        return default, f"default: {why}"
+        return default, "default: " + dwhy
     if sel in by_slug:                       # a profile or user may name a model they have
         return by_slug[sel], "named in an override"
-    return default, f"'{sel}' is not in your model list, so the default"
+    return default, f"'{sel}' is not in your model list, so " + dwhy
 
 
 def pick_claude(sel: str, ladder: List[str]) -> (Optional[str], str):
@@ -114,7 +115,7 @@ def resolve(content: Path, home: Path, profile: Optional[dict] = None) -> Dict[s
             "when": tier.get("when") or "",
             "brief": tier.get("brief") or "",
             "codex": {"model": (m or {}).get("slug"), "effort": lower_effort(want, offered, ladder, ceiling),
-                      "why": why if m else "no model list found (run codex once): the tool's own default"},
+                      "why": why if (m or models) else "no model list found (run codex once): the tool's own default"},
             # Claude Code lowers an effort a model does not offer itself; the ceiling still applies here
             "claude": {"model": c_model, "effort": lower_effort(want, None, ladder, ceiling), "why": c_why},
         }

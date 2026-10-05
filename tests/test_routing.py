@@ -47,7 +47,9 @@ class Routing(unittest.TestCase):
         self.assertEqual(set(r), {"quick", "standard", "deep", "review"})
         self.assertEqual(r["quick"]["codex"]["model"], "m-small")          # visible + described as fast
         self.assertEqual(r["quick"]["codex"]["effort"], "low")
-        self.assertEqual(r["deep"]["codex"]["model"], "m-flagship")        # first in the picker
+        # default = Codex's own default: nothing pinned (the account's real default may be absent from the list)
+        self.assertIsNone(r["deep"]["codex"]["model"])
+        self.assertIn("not pinned", r["deep"]["codex"]["why"])
         self.assertEqual(r["deep"]["codex"]["effort"], "high")
         self.assertTrue(all(t["when"] for t in r.values()))
 
@@ -55,6 +57,12 @@ class Routing(unittest.TestCase):
         self.cache()
         r = R.resolve(CONTENT, self.home)
         self.assertNotIn("m-hidden-fast", {t["codex"]["model"] for t in r.values()})
+
+    def test_a_configured_model_outside_the_list_is_still_the_default(self):
+        self.cache()
+        (self.home / ".codex" / "config.toml").write_text('model = "m-newest"\n')   # newer than the cached list
+        r = R.resolve(CONTENT, self.home)
+        self.assertEqual((r["deep"]["codex"]["model"], r["deep"]["codex"]["effort"]), ("m-newest", "high"))
 
     def test_config_model_is_the_default(self):
         self.cache()
@@ -86,7 +94,7 @@ class Routing(unittest.TestCase):
     def test_a_named_model_the_account_lacks_falls_back(self):
         self.cache()
         r = R.resolve(CONTENT, self.home, {"routing": {"tiers": {"deep": {"codex": "no-such-model"}}}})
-        self.assertEqual(r["deep"]["codex"]["model"], "m-flagship")
+        self.assertIsNone(r["deep"]["codex"]["model"])
         self.assertIn("not in your model list", r["deep"]["codex"]["why"])
 
     def test_no_model_list_pins_nothing(self):
