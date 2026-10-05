@@ -58,7 +58,7 @@ HELDOUT_MISSES = [
 ]
 
 # Missed by the guard as it was before this set existed (39 of 45), and fixed by the cd-then-glob fix in the same
-# commit that added the set (b09d80b), with the set in view. By the rule above the set is no longer held out for
+# commit that added the set (e543fe1), with the set in view. By the rule above the set is no longer held out for
 # it, so the held-out score is the one that counts it as a miss; --rate prints both.
 FIXED_WITH_THE_SET_IN_VIEW = ["cd /home && rm -rf *"]
 
