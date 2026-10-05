@@ -42,7 +42,13 @@ hasnt "their settled node is not called tampering" "$out" "TAMPERED 2"
 check "and their [x] survives" "- [x] 2." "$(grep -o '^- \[.\] 2\.' plan/e.md)"
 # a genuine forgery on a node nobody owns must STILL be caught
 mkdir -p forge
-printf '#!/usr/bin/env bash\n/usr/bin/sed -i "" "s/^- \\[ \\] 2\\./- [x] 2./" %s/plan/e.md\nprintf "{\\"is_error\\":false,\\"subtype\\":\\"success\\",\\"result\\":\\"ok\\",\\"total_cost_usd\\":0,\\"duration_ms\\":10,\\"permission_denials\\":[]}\\n"\n' "$T" > forge/claude
+cat > forge/claude <<STUB
+#!/usr/bin/env bash
+# portable in-place edit: GNU sed reads -i "" as the script, BSD sed requires it
+if sed --version >/dev/null 2>&1; then sed -i 's/^- \[ \] 2\./- [x] 2./' $T/plan/e.md
+else sed -i '' 's/^- \[ \] 2\./- [x] 2./' $T/plan/e.md; fi
+printf '{"is_error":false,"subtype":"success","result":"ok","total_cost_usd":0,"duration_ms":10,"permission_denials":[]}\n'
+STUB
 chmod +x forge/claude
 printf '## goal: e\n- [ ] 1. mine | gate: true\n- [ ] 2. untouched | gate: true\n' > plan/e.md
 out=$(PATH="$T/forge:$PATH" PLAN_QUIET=1 "$PLAN" run e --workers 1 --max-rounds 1 2>&1)
@@ -104,7 +110,7 @@ out=$(cd rob && "$PLAN" resume 2>&1); rc=$?
 has   "the good plan is still reported" "$out" "good"
 check "resume still signals outstanding work" "1" "$rc"
 (cd rob && "$PLAN" list >/dev/null 2>&1); check "list does not crash" "0" "$?"
-HOOK="$HOME/.claude/hooks/session-resume.sh"
+HOOK="${SESSION_RESUME_HOOK:-/nonexistent}"   # opt-in: an author-machine hook, not part of this repo
 if [ -x "$HOOK" ]; then
   hout=$(printf '{"cwd":"%s/rob"}' "$T" | "$HOOK" 2>/dev/null)
   has "the hook still reports the open work" "$hout" "good"

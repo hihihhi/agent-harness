@@ -412,7 +412,7 @@ echo "== red team: the plan file is not a trusted resource =="
 mkdir -p "$T/stub"
 cat > "$T/stub/claude" <<'STUB'
 #!/usr/bin/env bash
-sed -i '' 's/^- \[ \] 2\./- [x] 2./' plan/t.md 2>/dev/null
+if sed --version >/dev/null 2>&1; then sed -i 's/^- \[ \] 2\./- [x] 2./' plan/t.md; else sed -i '' 's/^- \[ \] 2\./- [x] 2./' plan/t.md; fi
 printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"duration_ms":50,"total_cost_usd":0.01,"result":"ok","permission_denials":[]}\n'
 STUB
 chmod +x "$T/stub/claude"
@@ -433,7 +433,7 @@ has   "and the repair is stated"      "$out" "repaired from the pre-dispatch sna
 # this fix, which skipped claimed nodes wholesale
 cat > "$T/stub/claude" <<'STUB'
 #!/usr/bin/env bash
-sed -i '' 's|gate: test -f never.txt|gate: true|' plan/t.md 2>/dev/null
+if sed --version >/dev/null 2>&1; then sed -i 's|gate: test -f never.txt|gate: true|' plan/t.md; else sed -i '' 's|gate: test -f never.txt|gate: true|' plan/t.md; fi
 printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"duration_ms":50,"total_cost_usd":0.01,"result":"ok","permission_denials":[]}\n'
 STUB
 chmod +x "$T/stub/claude"
@@ -449,7 +449,7 @@ check "and the node is not done"             "- [ ] 1." "$(grep -o '^- \[.\] 1\.
 # a worker deleting a node must not shrink the graph
 cat > "$T/stub/claude" <<'STUB'
 #!/usr/bin/env bash
-sed -i '' '/^- \[ \] 2\./d' plan/t.md 2>/dev/null
+if sed --version >/dev/null 2>&1; then sed -i '/^- \[ \] 2\./d' plan/t.md; else sed -i '' '/^- \[ \] 2\./d' plan/t.md; fi
 printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"duration_ms":50,"total_cost_usd":0.01,"result":"ok","permission_denials":[]}\n'
 STUB
 chmod +x "$T/stub/claude"
@@ -642,7 +642,7 @@ mkdir -p "$T/stub2"
 # swapped it back -- ALL DONE, exit 0, over a gate that never passed.
 cat > "$T/stub2/claude" <<'STUB'
 #!/usr/bin/env bash
-sed -i '' 's|gate: test -f NEVER.txt|gate: true|' plan/t.md 2>/dev/null
+if sed --version >/dev/null 2>&1; then sed -i 's|gate: test -f NEVER.txt|gate: true|' plan/t.md; else sed -i '' 's|gate: test -f NEVER.txt|gate: true|' plan/t.md; fi
 printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"duration_ms":40,"total_cost_usd":0.01,"result":"ok","permission_denials":[]}\n'
 STUB
 chmod +x "$T/stub2/claude"
@@ -675,7 +675,7 @@ cat > "$T/stub2/claude" <<'STUB'
 #!/usr/bin/env bash
 printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"duration_ms":40,"total_cost_usd":0.01,"result":"ok","permission_denials":[]}\n'
 sleep 0.2
-sed -i '' 's/^- \[ \] 1\./- [x] 1./' plan/t.md 2>/dev/null
+if sed --version >/dev/null 2>&1; then sed -i 's/^- \[ \] 1\./- [x] 1./' plan/t.md; else sed -i '' 's/^- \[ \] 1\./- [x] 1./' plan/t.md; fi
 STUB
 chmod +x "$T/stub2/claude"
 fresh <<'EOF'
@@ -689,7 +689,7 @@ hasnt "a forged done mark is never green" "$out" "ALL DONE"
 # time came back [ ] because the restore hardcoded pending -- while printing [x].
 cat > "$T/stub2/claude" <<'STUB'
 #!/usr/bin/env bash
-sed -i '' 's|gate: KEEPME|gate: false|' plan/t.md 2>/dev/null
+if sed --version >/dev/null 2>&1; then sed -i 's|gate: KEEPME|gate: false|' plan/t.md; else sed -i '' 's|gate: KEEPME|gate: false|' plan/t.md; fi
 printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"duration_ms":40,"total_cost_usd":0.01,"result":"ok","permission_denials":[]}\n'
 STUB
 chmod +x "$T/stub2/claude"
@@ -766,7 +766,7 @@ else bad "orchestrator owner carries a pid" "got: $own"; fi
 echo "-- authorised gate: the specific refusal, not a downstream symptom --"
 cat > "$T/stub3/claude" <<'STUB'
 #!/usr/bin/env bash
-sed -i '' 's|gate: test -f NOPE.txt|gate: true|' plan/t.md 2>/dev/null
+if sed --version >/dev/null 2>&1; then sed -i 's|gate: test -f NOPE.txt|gate: true|' plan/t.md; else sed -i '' 's|gate: test -f NOPE.txt|gate: true|' plan/t.md; fi
 printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"duration_ms":30,"total_cost_usd":0.0,"result":"ok","permission_denials":[]}\n'
 STUB
 chmod +x "$T/stub3/claude"
@@ -786,7 +786,7 @@ cat > "$T/stub3/claude" <<'STUB'
 prompt="$2"
 if printf '%s' "$prompt" | grep -q '^NODE 2:'; then
   sleep 3
-  sed -i '' 's/^- \[ \] 1\./- [x] 1./' plan/t.md 2>/dev/null
+  if sed --version >/dev/null 2>&1; then sed -i 's/^- \[ \] 1\./- [x] 1./' plan/t.md; else sed -i '' 's/^- \[ \] 1\./- [x] 1./' plan/t.md; fi
 fi
 printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"duration_ms":30,"total_cost_usd":0.0,"result":"ok","permission_denials":[]}\n'
 STUB
@@ -945,8 +945,13 @@ EOF
 # One session, many subshells: this is EXACTLY the shape that deadlocked, so it
 # must now succeed. `bash -c 'one command'` execs, leaving no intermediate
 # process, so the compound form is required to get a genuinely different parent.
+# Identity comes from CLAUDE_CODE_SESSION_ID when it is set. This passed for months only because the
+# suite always ran INSIDE a Claude Code session; on a plain CI runner the variable is absent, the
+# engine falls back to the parent pid, and the two shells were strangers. Set it here, explicitly.
+export CLAUDE_CODE_SESSION_ID=plan-test-one-session
 bash -c "cd '$T' && '$PLAN' claim t >/dev/null; :"
 bash -c "cd '$T' && '$PLAN' gate t 1 >/dev/null 2>&1; exit \$?" ; rc=$?
+unset CLAUDE_CODE_SESSION_ID
 check "a second shell in the SAME session settles it" "0" "$rc"
 check "and the node is done"             "- [x] 1." "$(grep -o '^- \[.\] 1\.' plan/t.md)"
 

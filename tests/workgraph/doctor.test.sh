@@ -16,7 +16,11 @@ trap cleanup EXIT
 mkdir -p "$T/plan"; cd "$T" || exit 1
 printf '## goal: d\n- [ ] 1. a | gate: true\n' > plan/d.md
 
-out=$("$PLAN" doctor 2>&1); rc=$?
+# A healthy machine has `claude` on PATH (plan run dispatches it). CI runners do not, so the healthy
+# case gets a stub: what is under test is plan doctor, not whether this runner has Claude installed.
+mkdir -p "$T/stub"
+printf '#!/bin/sh\necho "2.0.0 (stub)"\n' > "$T/stub/claude"; chmod +x "$T/stub/claude"
+out=$(PATH="$T/stub:$PATH" "$PLAN" doctor 2>&1); rc=$?
 printf '%s\n' "$out" | sed 's/^/     | /'
 
 has "reports the python it will run under" "$out" "python"
