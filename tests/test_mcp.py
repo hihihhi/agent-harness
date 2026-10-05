@@ -744,7 +744,7 @@ class DescriptorRanksFirst(unittest.TestCase):
         import tempfile
         from pathlib import Path
         from agent_harness.mcp import kb
-        body = "# Machine\nThe research server has 4 GPUs with 96 GB of GPU memory per card.\n"
+        body = "# Machine\nThe example server has 8 GPUs with 24 GB of GPU memory per card.\n"
         with tempfile.TemporaryDirectory() as t:
             hh = Path(t) / "hh"; (hh / "profile").mkdir(parents=True)
             (hh / "profile" / "SERVER.md").write_text(body)
