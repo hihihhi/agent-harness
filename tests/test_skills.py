@@ -21,7 +21,7 @@ BODY = """## When to Use
 Counting executed trades of a Shenzhen stock on one day in the cleansed A-share trades.
 
 ## Procedure
-1. `ic.load("A-Stock/trades", symbols=[sym], start=day, end=day)`.
+1. `ic.load("market/trades", symbols=[sym], start=day, end=day)`.
 2. Keep `event == "fill"`: Shenzhen rows include cancellations.
 
 ## Pitfalls
