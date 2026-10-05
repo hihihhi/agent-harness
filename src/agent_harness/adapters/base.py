@@ -1,4 +1,4 @@
-"""Adapter interface shared by every tool adapter (see CONTRACT.md).
+"""Adapter interface shared by every tool adapter (see docs/contract.md).
 
 An adapter never writes anything: it returns FileChanges and the installer applies them.
 """

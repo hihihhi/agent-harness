@@ -1,6 +1,6 @@
 # Diagrams
 
-Numbered index of every diagram for agent-harness. The README embeds 1, 2 and 3; 4 is only here.
+Numbered index of every diagram for agent-harness. The README embeds 1 and 2; 3 and 4 are only here.
 If a diagram and the code disagree, the code wins.
 
 1. [System overview](#1-system-overview)
@@ -190,7 +190,7 @@ transcribed in [eval/results/historical.md](../eval/results/historical.md).
 ## 4. History: one-tool setups to agent-harness
 
 Which earlier setups agent-harness replaced, and what moved between its tagged versions; the numbers are the
-README's (Results, What I learned).
+ones in [results.md](results.md) and the README's "What I learned".
 
 ```mermaid
 flowchart TB
@@ -220,5 +220,5 @@ flowchart TB
     class V030 key
 ```
 
-Where in the code: README "History"; the version tags (`git tag`); `content/AGENTS.md` (the rules);
+Where in the code: [design-decisions.md, History](design-decisions.md#history); the version tags (`git tag`); `content/AGENTS.md` (the rules);
 `src/agent_harness/workgraph/`; `tests/guard_corpus_agentic_os.py`, `tests/test_guard_cross.py`.
