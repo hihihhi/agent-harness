@@ -40,8 +40,11 @@ def _env(**extra):
 def test_vendored_suite(suite):
     path = os.path.join(SUITES, suite + ".test.sh")
     r = subprocess.run(["bash", path], capture_output=True, text=True, env=_env(), timeout=900)
-    tail = "\n".join((r.stdout + r.stderr).strip().splitlines()[-25:])
-    assert r.returncode == 0 and "FAIL=0" in r.stdout, tail
+    lines = (r.stdout + r.stderr).strip().splitlines()
+    # Every FAIL line and the line after it, not just the tail: on CI a 25-line tail hid which assertions
+    # actually failed, twice.
+    fails = [ln for i, ln in enumerate(lines) if "FAIL " in ln or (i and "FAIL " in lines[i - 1])]
+    assert r.returncode == 0 and "FAIL=0" in r.stdout, "\n".join(fails[:60] + lines[-3:])
 
 
 def test_every_ported_suite_exists_and_none_is_silently_skipped():
