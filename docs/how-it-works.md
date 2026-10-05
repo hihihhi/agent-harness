@@ -189,7 +189,7 @@ laptop and on a remote Linux server reached over SSH: install the harness on the
 | Cursor | the Cursor app: rules and memory tools | Cursor is itself a VS Code build, so this is the same install |
 | Gemini CLI | terminal `gemini`: `GEMINI.md`, memory tools, skills | Gemini Code Assist's agent mode reads the same `~/.gemini` settings |
 | Claude desktop app | memory and knowledge tools | not applicable |
-| JupyterLab (Jupyter AI) | rules for notebook assistants | not applicable |
+| JupyterLab (Jupyter AI) | memory tools; its agents (Claude Code, Codex, Gemini CLI) read their own rules | not applicable |
 | anything else that reads `AGENTS.md` | the shared rules file | the same |
 
 Skills are installed once in `~/.agents/skills/`, which Codex, Gemini CLI, Cursor and Copilot read; Claude
