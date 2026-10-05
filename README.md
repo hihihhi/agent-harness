@@ -1,6 +1,6 @@
 # agent-harness: Shared Rules, Memory and a Command Guard for AI Coding Agents
 
-[![ci](https://github.com/hihihhi/agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/hihihhi/agent-harness/actions/workflows/ci.yml) [![lint](https://github.com/hihihhi/agent-harness/actions/workflows/lint.yml/badge.svg)](https://github.com/hihihhi/agent-harness/actions/workflows/lint.yml)
+[![ci](https://github.com/oscar-chw/agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/oscar-chw/agent-harness/actions/workflows/ci.yml) [![lint](https://github.com/oscar-chw/agent-harness/actions/workflows/lint.yml/badge.svg)](https://github.com/oscar-chw/agent-harness/actions/workflows/lint.yml)
 
 **One standard-library install that gives Claude Code shared rules, memory, retrieval, lessons and a command guard, and gives
 six other AI coding tools the rules, the memory tools or both, as far as each supports them ([which tool gets what](docs/how-it-works.md#supported-tools)).**
@@ -36,7 +36,7 @@ into a throwaway home, printed as `$DEMO_HOME`, never into yours.
 **Quick start** (Python 3.9+, nothing else; `--dry-run` writes nothing):
 
 ```sh
-git clone https://github.com/hihihhi/agent-harness.git && cd agent-harness
+git clone https://github.com/oscar-chw/agent-harness.git && cd agent-harness
 python3 bin/harness install --dry-run     # every file it would change, for each tool you have
 bash scripts/demo.sh                      # install, doctor and the guard, in a throwaway home
 ```
