@@ -1,9 +1,9 @@
-# agent-harness
+# agent-harness: Shared Rules, Memory and a Command Guard for AI Coding Agents
 
 [![ci](https://github.com/hihihhi/agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/hihihhi/agent-harness/actions/workflows/ci.yml) [![lint](https://github.com/hihihhi/agent-harness/actions/workflows/lint.yml/badge.svg)](https://github.com/hihihhi/agent-harness/actions/workflows/lint.yml)
 
-**One standard-library install that gives Claude Code shared rules, memory, retrieval, lessons and a command guard, and six
-other AI coding tools the rules and/or memory tools each can take ([which tool gets what](docs/how-it-works.md#supported-tools)).**
+**One standard-library install that gives Claude Code shared rules, memory, retrieval, lessons and a command guard, and gives
+six other AI coding tools the rules, the memory tools or both, as far as each supports them ([which tool gets what](docs/how-it-works.md#supported-tools)).**
 
 ```console
 $ harness --home $DEMO_HOME install --dry-run --tools claude-code
@@ -47,16 +47,14 @@ restores them all.
 
 | evidence | result | qualifier and source |
 |---|---|---|
-| Recall of an earlier session, harness v0.1.1 → v0.2.0 (same account setup; v0.2.0 adds `session_search`) | **Claude 1/3 → 3/3, Codex 0/3 → 3/3** | historical, **private corpus**, one run per question. n=3 is not significant per tool (Fisher exact p = 0.40, 0.10). Pooled 1/6 → 6/6 gives p = 0.015, but both tools answered the same 3 questions, so the six results are not independent: suggestive only. Plain's 0/3 is a floor: it cannot read past sessions. [eval/results/historical.md](eval/results/historical.md) |
+| Recall of an earlier session, harness v0.1.1 → v0.2.0 (same account setup; v0.2.0 adds `session_search`) | **Claude 1/3 → 3/3, Codex 0/3 → 3/3** | historical, **private corpus**, one run per question, n=3 per tool; significance tests in [Results](#results). Plain's 0/3 is a floor: it cannot read past sessions. [eval/results/historical.md](eval/results/historical.md) |
 | Command guard (Claude Code), held out | **39/45 dangerous commands blocked (87%), 20/20 safe controls allowed**, with the guard as it was before the set existed; 40/45 (89%) after one fix made with the set in view | written by the same build session (2026-10-03, after reading the first review), not from the corpus it was fixed against (in-sample: 105/105, 108/108). [tests/test_guard_heldout.py](tests/test_guard_heldout.py) |
 | Tests, Python 3.9 | **270 passed**, 2 skipped, 21 expected failures (pinned guard gaps and held-out misses) | `python3 -m pytest -q tests eval`. On 3.11: 271 passed, 1 skipped (a TOML check needs `tomllib`; the other skip is a live check that needs `HARNESS_LIVE=1`) |
 
-Not everything gained: Claude with the harness used 1.24x plain's tokens in the v0.1.1 eval, two of the seven tools
-were measured, and the public synthetic eval has no results yet ([Results](#results), [Limits](#limits)).
+Provenance: the learning loop (`session_search`, `skill_manage`, the memory snapshot arm) follows the design of
+Hermes Agent; skills use the agentskills.io format; the tools talk to the harness over the Model Context Protocol.
 
-Provenance: implemented with AI coding agents under Oscar's design and review. The learning loop (`session_search`,
-`skill_manage`, the memory snapshot arm) follows the design of Hermes Agent; skills use the agentskills.io
-format; the tools talk to the harness over the Model Context Protocol.
+Implemented with AI coding agents under Oscar's design and review.
 
 ## The problem
 
@@ -93,6 +91,9 @@ uninstall; the safety guard goes into Claude Code only.
 
 ## Results
 
+Not everything gained: Claude with the harness used 1.24x plain's tokens in the v0.1.1 eval, two of the seven tools
+were measured, and the public synthetic eval has no results yet (below, and [Limits](#limits)).
+
 ### The A/B eval (historical, private corpus)
 
 **Measured on a private corpus, 2026; question set not published.** The v0.2 eval, 2026-09-30, **254 runs**
@@ -113,8 +114,9 @@ column is a floor, not a competitor; the harness's own effect is v0.1.1 against 
 | Claude fixed context per request, tokens | 17,365 | 37,173 | 37,668 |
 | Codex fixed context per request, tokens | 15,054 | 15,054 | 15,134 |
 
-- **Recall, v0.1.1 → v0.2.0:** Fisher exact two-sided p = 0.40 (Claude) and 0.10 (Codex); pooled 1/6 → 6/6,
-  p = 0.015, though both tools answered the same 3 questions. Suggestive, not established.
+- **Recall, v0.1.1 → v0.2.0:** n=3 is not significant per tool: Fisher exact two-sided p = 0.40 (Claude) and 0.10
+  (Codex). Pooled 1/6 → 6/6 gives p = 0.015, but both tools answered the same 3 questions, so the six results are
+  not independent. Suggestive, not established.
 - **Accuracy** differences of one or two answers on 20 questions are noise: one run per question, and the same
   v0.1.1 build scored 20/20 in its own eval and 18/20 here.
 - **Tokens.** v0.2.0 added 495 tokens per request to Claude's fixed context (37,173 → 37,668), about 22% of the
