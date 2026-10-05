@@ -49,3 +49,10 @@ new sessions.
 
 Stop and report honestly when the same stage fails twice the same way: change the approach, do
 not repeat it.
+
+## Making it hold: the work graph
+`state_save` is free text nothing checks. For work spanning sessions, parallel, or not to be
+declared done by assertion, use the `plan` tool (HARNESS_ENABLE=plan): `new <slug> "<goal>"`
+gates stages 1-3 on substance; each node's **gate** is a command, and exit 0 is the only way it
+is done. `ready`, `context <slug> <id>` (rebuilt from disk) and `gate <slug> <id>`. A failed gate
+returns the node to pending with its output: the jump-back, with evidence.

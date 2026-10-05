@@ -1,0 +1,3 @@
+#!/bin/sh
+# Shim, so gates and agents can call `phase-check` by name. plan puts this directory on PATH for every gate.
+exec python3 "$(dirname "$0")/../phase_check.py" "$@"

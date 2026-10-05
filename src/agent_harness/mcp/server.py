@@ -21,6 +21,7 @@ if __package__ in (None, ""):  # executed as a script: make `agent_harness` impo
     from agent_harness.mcp.memory import Memory  # type: ignore
     from agent_harness.mcp import sessions, skills  # type: ignore
     from agent_harness.mcp.state import State  # type: ignore
+    from agent_harness.workgraph import tool as workgraph_tool  # type: ignore
 else:
     from .. import __version__
     from . import checks
@@ -28,6 +29,7 @@ else:
     from .memory import Memory
     from . import sessions, skills
     from .state import State
+    from ..workgraph import tool as workgraph_tool
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 LATEST = PROTOCOL_VERSIONS[0]
@@ -161,6 +163,11 @@ TOOLS = [
                                "_req": True},
                        name={"type": "string"}, description={"type": "string"}, body={"type": "string"},
                        old={"type": "string"}, new={"type": "string"})},
+    {"name": "plan",
+     "description": "The work graph for multi-step work: plan/<slug>.md, each node done only when its gate "
+                    "command exits 0. args is a plan command line, e.g. new <slug> \"<goal>\", ready <slug>, "
+                    "context <slug> <id>, gate <slug> <id>, status <slug>, resume.",
+     "inputSchema": _s(args={"type": "string", "_req": True}, project={"type": "string", "default": ""})},
     {"name": "run_checks",
      "description": "Run this project's own tests/checks (found automatically, or cmd) and return only the "
                     "failures and the summary (<=2 KB). Use after your last edit.",
@@ -254,6 +261,7 @@ class Server:
             "skill_manage": lambda: self.skill_manage(a),
             "run_checks": lambda: checks.run_checks(a.get("cmd", "") or "", int(a.get("timeout", 300)),
                                                     home=self._home),
+            "plan": lambda: workgraph_tool.run_cli(a.get("args", "") or "", a.get("project", "") or ""),
         }
         if name not in table:
             raise LookupError(name)
@@ -272,6 +280,9 @@ class Server:
         if name == "skill_manage":
             return skills.render("view" if isinstance(result, str) else "list" if isinstance(result, list) else "",
                                  result)
+        if name == "plan":
+            return result["output"] if result.get("exit") in (0, None) else "exit %s\n%s" % (
+                result["exit"], result["output"])
         if name == "run_checks":
             if result.get("exit") is None:
                 return result["output"]

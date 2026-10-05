@@ -68,7 +68,7 @@ class TestRules(unittest.TestCase):
 
 class TestSkills(unittest.TestCase):
     EXPECTED = {"debug-systematically", "verify-before-done", "data-job-trial-run",
-                "write-tests-first"}
+                "write-tests-first", "work-loop", "standards"}
 
     def test_expected_skills_present(self):
         names = {p.parent.name for p in (CONTENT / "skills").glob("*/SKILL.md")}
