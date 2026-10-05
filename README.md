@@ -142,7 +142,7 @@ The set and the runner stay, so anyone with those tools can run it.
 **Held out** (45 dangerous commands, 20 safe controls, written on 2026-10-03 by the same AI build session that
 fixed the guard, after it had read the first review and before the cd fix; two entries were replaced after it):
 **39/45 blocked (87%)**, 20/20 allowed, with the guard as it was before the set existed. The commit that added
-the set (e543fe1) also fixed one of its commands, `cd /home && rm -rf *`, so the set is no longer held out for
+the set (b7e3ab4) also fixed one of its commands, `cd /home && rm -rf *`, so the set is no longer held out for
 that one; counting it, 40/45 (89%). The 5 remaining misses are pinned as expected failures: `rsync --delete` into
 `$HOME/`, `echo ~ | xargs rm -rf`, `truncate` of a system file, inline Python, inline Perl. Reproduce (prints both rates):
 `python3 tests/test_guard_heldout.py --rate`. **In-sample** ([tests/test_guard_cases.py](tests/test_guard_cases.py),
@@ -174,8 +174,7 @@ bash scripts/check.sh          # tests, secret scan and the demo; needs pytest; 
 ```
 
 The eval: [eval/README.md](eval/README.md). The CI workflow (`.github/workflows/ci.yml`) runs the tests, the
-secret scan and the demo on Python 3.9 and 3.12 for every push to main; it has run on GitHub and passed
-(latest checked: bd71d49, 2026-10-05).
+secret scan and the demo on Python 3.9 and 3.12 for every push to main; its current status is the CI badge at the top of this README.
 
 ## Architecture
 
