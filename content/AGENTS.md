@@ -22,19 +22,16 @@ go back to where the evidence points. Same failure twice: change the approach (`
 
 ## Model and effort
 
-Subagents `harness-quick`, `harness-standard`, `harness-deep`, `harness-review` each carry a model and effort
-chosen for the account. Hand mechanical sub-tasks to quick; a hard problem, or a check that failed twice the
-same way, to deep; finished non-trivial work to review before calling it done. Never above deep's effort
-unless the user asks.
+Subagents `harness-quick`, `harness-standard`, `harness-deep`, `harness-review` carry this account's model
+and effort: mechanical sub-tasks to quick; a hard problem or a check failed twice the same way to deep;
+finished work to review before calling it done. Nothing above deep's effort unless the user asks.
 
 ## Knowledge
 
-Before the first step of a task, orient: read Environment below, then `kb_get` each index entry
-whose name touches the task (paths, data, tools, this machine's rules). Never ask the user what
-the machine is or where things live; look it up.
+Before the first step of a task, read Environment below and `kb_get` each index entry it touches.
+Never ask the user what the machine is or where things live; look it up.
 The harness MCP tool `kb_get` (not a shell command) fetches one section by id; a page name lists
-its sections. Use `kb_search` only when nothing in the index fits. Never read a whole document
-when a section will do.
+its sections. `kb_search` only when nothing in the index fits. Never read a whole document.
 
 ## Memory
 
