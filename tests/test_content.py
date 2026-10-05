@@ -70,6 +70,15 @@ class TestSkills(unittest.TestCase):
     EXPECTED = {"debug-systematically", "verify-before-done", "data-job-trial-run",
                 "write-tests-first", "work-loop", "standards"}
 
+    def test_rules_tell_the_agent_to_orient_before_starting(self):
+        """A user who knows nothing about the machine must not have to brief the agent: the rules send it to
+        the Environment section and the knowledge index BEFORE the first step, not only when asked."""
+        rules = (CONTENT / "AGENTS.md").read_text(encoding="utf-8")
+        know = rules.split("## Knowledge", 1)[1].split("##", 1)[0]
+        self.assertIn("Before the first step", know)
+        self.assertIn("Environment", know)
+        self.assertIn("Never ask the user what", know)
+
     def test_expected_skills_present(self):
         names = {p.parent.name for p in (CONTENT / "skills").glob("*/SKILL.md")}
         self.assertTrue(self.EXPECTED <= names, names)

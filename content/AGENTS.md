@@ -22,9 +22,12 @@ go back to where the evidence points. Same failure twice: change the approach (`
 
 ## Knowledge
 
-The Knowledge index below lists section ids. The harness MCP tool `kb_get` (not a shell command)
-fetches one section by id; given a page name it lists that page's sections. Use the `kb_search`
-tool only when nothing there fits. Never read a whole document when a section will do.
+Before the first step of a task, orient: read Environment below, then `kb_get` each index entry
+whose name touches the task (paths, data, tools, this machine's rules). Never ask the user what
+the machine is or where things live; look it up.
+The harness MCP tool `kb_get` (not a shell command) fetches one section by id; a page name lists
+its sections. Use `kb_search` only when nothing in the index fits. Never read a whole document
+when a section will do.
 
 ## Memory
 
