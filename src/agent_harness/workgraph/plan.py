@@ -104,7 +104,7 @@ FENCE_RE = re.compile(r"^\s*(```|~~~)")
 # The trailing [xxxxxxxx] is a signature over the whole normalised output. The
 # group is optional so notes written before this existed still parse.
 NOTE_RE = re.compile(r"exit (-?\d+)(?: in (\d+)s)?(?: \[([0-9a-f]{8})\])? — (.*)$")
-FIELD_ORDER = ("needs", "ctx", "risk", "owner", "lease", "gate")
+FIELD_ORDER = ("needs", "ctx", "risk", "tier", "owner", "lease", "gate")
 
 
 def now_iso():
@@ -1949,9 +1949,75 @@ Report in two lines: what you changed, and anything the next attempt should know
 """
 
 
+def tier_for(n):
+    """Which routing tier a worker on this node gets: the node's own `tier:` when it names one, else `standard`
+    for a first attempt and `deep` once its gate has failed (extra compute only where a check has shown the
+    cheaper attempt was not enough). The tiers' models and efforts are not chosen here: they are the agent files
+    agent-harness writes from its routing.toml (harness-<tier>), resolved per account."""
+    named = (n["fields"].get("tier") or "").strip()
+    if named:
+        return named
+    return "deep" if any(x["code"] != "0" for x in attempts(n)) else "standard"
+
+
+def runner():
+    """`claude` or `codex`: PLAN_RUNNER, else whichever is on PATH (claude first)."""
+    r = os.environ.get("PLAN_RUNNER", "").strip().lower()
+    if r in ("claude", "codex"):
+        return r
+    return "claude" if shutil.which("claude") or not shutil.which("codex") else "codex"
+
+
+def codex_tier(tier, home=None):
+    """(model, effort) from ~/.codex/agents/harness-<tier>.toml, or (None, None) when the harness wrote none."""
+    p = os.path.join(home or os.path.expanduser("~"), ".codex", "agents", f"harness-{tier}.toml")
+    out = {}
+    try:
+        for line in open(p, encoding="utf-8"):
+            m = re.match(r'^(model|model_reasoning_effort)\s*=\s*"([^"]*)"', line)
+            if m:
+                out[m.group(1)] = m.group(2)
+    except OSError:
+        pass
+    return out.get("model"), out.get("model_reasoning_effort")
+
+
+def codex_cmd(prompt, tier, model=None, home=None):
+    m, effort = codex_tier(tier, home)
+    cmd = ["codex", "exec", "--json", "--sandbox", "workspace-write"]
+    if model or m:
+        cmd += ["-m", model or m]
+    if effort and not model:
+        cmd += ["-c", f'model_reasoning_effort="{effort}"']
+    return cmd + [prompt]
+
+
+def codex_info(rc, out, err):
+    """`codex exec --json` (JSON lines) as the envelope classify_worker reads: the last agent message is the
+    result; a non-zero exit is an error whose text is what codex said last."""
+    last = ""
+    for line in (out or "").splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        item = ev.get("item") if isinstance(ev, dict) else None
+        if isinstance(item, dict) and item.get("type") in ("agent_message", "assistant_message") and item.get("text"):
+            last = item["text"]
+        elif isinstance(ev, dict) and ev.get("type") in ("error", "turn.failed"):
+            last = str(ev.get("message") or (ev.get("error") or {}).get("message") or last)
+    if rc != 0 and not last:
+        last = (err or "").strip().splitlines()[-1] if (err or "").strip() else f"codex exited {rc}"
+    return {"is_error": rc != 0, "result": last, "subtype": "success" if rc == 0 else "error"}
+
+
 def _dispatch(slug, nid, timeout, model=None):
     """Run one worker. Returns dispatch health, never task truth."""
     prompt = build_context(slug, nid) + WORKER_INSTRUCTIONS
+    _, _, _nodes, _, _ = load(slug)
+    tier = tier_for(_nodes[nid]) if nid in _nodes else "standard"
+    if runner() == "codex":
+        return _dispatch_codex(nid, prompt, tier, timeout, model)
     # Scope what a worker inherits. `claude -p` loads PROJECT-scoped MCP servers
     # without the approval prompt an interactive session shows, so a .mcp.json in
     # any repo plan run is pointed at would execute silently, once per worker per
@@ -1966,6 +2032,8 @@ def _dispatch(slug, nid, timeout, model=None):
         cmd += ["--max-budget-usd", budget]
     if model:
         cmd += ["--model", model]
+    elif os.path.exists(os.path.expanduser(f"~/.claude/agents/harness-{tier}.md")):
+        cmd += ["--agent", f"harness-{tier}"]      # its model + effort, from agent-harness routing.toml
     t0 = time.time()
     proc = None
     try:
@@ -2013,6 +2081,22 @@ def _dispatch(slug, nid, timeout, model=None):
             "denials": len(info.get("permission_denials") or []),
             "text": str(info.get("result", ""))[:300],
             **classify_worker(info)}
+
+
+def _dispatch_codex(nid, prompt, tier, timeout, model=None):
+    cmd = _sandbox_prefix() + codex_cmd(prompt, tier, model)
+    t0 = time.time()
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return {"id": nid, "ok": False, "why": f"worker timed out after {timeout}s", "quota": False,
+                "dispatch_failed": True, "denials": 0, "secs": int(time.time() - t0), "cost": 0, "text": ""}
+    except Exception as e:
+        return {"id": nid, "ok": False, "why": f"dispatch crashed: {e}", "quota": False,
+                "dispatch_failed": True, "denials": 0, "secs": int(time.time() - t0), "cost": 0, "text": ""}
+    info = codex_info(proc.returncode, proc.stdout, proc.stderr)
+    return {"id": nid, "secs": int(time.time() - t0), "cost": 0, "denials": 0,
+            "text": str(info["result"])[:300], "tier": tier, **classify_worker(info)}
 
 
 def classify_worker(info):

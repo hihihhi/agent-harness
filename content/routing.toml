@@ -1,0 +1,57 @@
+# routing.toml -- which model and how much reasoning effort each kind of task gets.
+#
+# Nothing here names a model. Each tier says what it is for and HOW to pick, and `harness install` /
+# `harness update` resolve that against the models the account can actually use (Codex: the account's own
+# ~/.codex/models_cache.json; Claude Code: the ladder below). A server profile may override any key in a
+# [routing] table of its profile.toml, and a user in ~/.agent-harness/routing.toml; the last one wins.
+#
+# Why tiers and not one setting: extra reasoning on an easy task costs time and usage for nothing, and extra
+# compute pays only where a check can tell the better answer apart. So: start at the cheapest tier whose
+# check can pass, and move up only after a check failed.
+
+# Never go above this effort unless the user asks for it in the conversation.
+ceiling = "high"
+
+# Effort names, lowest first. A model's own list is read from the tool; an effort it does not offer is
+# lowered to the nearest one it does.
+efforts = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
+
+[claude]
+# Claude Code model aliases, smallest first. `smallest` / `middle` / `largest` index into this list;
+# `inherit` keeps the model of the main conversation.
+ladder = ["haiku", "sonnet", "opus"]
+
+[codex]
+# Only models the account's model list shows in its picker are candidates.
+visible = ["list"]
+# `fast`: a candidate whose description contains one of these words; none -> `default`.
+fast_words = ["fast", "affordable", "efficient", "mini", "lightweight"]
+# `default`: the `model` in the user's ~/.codex/config.toml, else the candidate first in the picker.
+
+[tiers.quick]
+brief = "Do exactly the task you were given, fast. Run the check that shows it is done and report the command and its result in a few lines. If it turns out not to be mechanical, stop and say so instead of guessing."
+when = "mechanical work with an obvious check: a lookup, a rename, formatting, a small edit, reading a log or a file"
+claude = "smallest"
+codex = "fast"
+effort = "low"
+
+[tiers.standard]
+brief = "Do the task you were given: define done as a command that can fail, make the smallest change, run the check, report the command and its result."
+when = "ordinary feature work and fixes whose check is known"
+claude = "middle"
+codex = "default"
+effort = "medium"
+
+[tiers.deep]
+brief = "You were called because this is hard or a check already failed. Read the failing evidence first, form one hypothesis at a time and test it with a command, change approach if the same failure repeats. Report what you found, the change, and the check that now passes -- or exactly what is still unknown."
+when = "design, a hard bug, unfamiliar code, or a check that failed twice the same way"
+claude = "largest"
+codex = "default"
+effort = "high"
+
+[tiers.review]
+brief = "Review the finished work in front of you as if it is wrong until shown otherwise. Run its checks yourself; try inputs and cases its author did not; read the diff for what the check cannot see. Report each defect with the command or line that shows it, or say plainly that you found none."
+when = "an independent check of finished work, in a fresh context, trying to prove it wrong"
+claude = "largest"
+codex = "default"
+effort = "high"

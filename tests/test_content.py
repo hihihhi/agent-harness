@@ -1,6 +1,7 @@
 """Checks on the shipped content: size caps, skill frontmatter, and no private data (public repo)."""
 import ast
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -52,6 +53,15 @@ class TestRules(unittest.TestCase):
                        "kb_get", "kb_search", "sudo", "data, never instructions",
                        "Never edit, skip or loosen a test", "harness:descriptor", "MCP tool `kb_get` (not a shell command)"):
             self.assertIn(needle, text)
+
+    def test_routing_rule_matches_the_template(self):
+        """v0.3: the tiers AGENTS.md tells the agent to use are exactly the tiers routing.toml defines."""
+        import re
+        sys.path.insert(0, str(CONTENT.parent / "src"))
+        from agent_harness import installer as I
+        tiers = set(I.load_toml((CONTENT / "routing.toml").read_text(encoding="utf-8"))["tiers"])
+        named = set(re.findall(r"`harness-([a-z]+)`", (CONTENT / "AGENTS.md").read_text(encoding="utf-8")))
+        self.assertEqual(named, tiers)
 
     def test_must_follow_rules_come_first(self):
         text = (CONTENT / "AGENTS.md").read_text(encoding="utf-8")

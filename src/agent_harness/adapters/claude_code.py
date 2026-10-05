@@ -6,6 +6,7 @@ import shlex
 from pathlib import Path
 from typing import List
 
+from .. import routing
 from .base import Adapter, Ctx, FileChange, base_dir, list_dirs, list_md, mcp_servers, shared_skills, which
 
 
@@ -124,6 +125,12 @@ class ClaudeCodeAdapter(Adapter):
                                       f"skill {d.name} (link to .agents/skills)"))
         for f in list_md(ctx.content / "prompts"):
             changes.append(FileChange(claude / "commands" / f.name, "replace", f, f"slash command /{f.stem}"))
+        if routing.available(ctx.content):          # one subagent per tier: model + effort from routing.toml
+            for name, tier in routing.resolve(ctx.content, ctx.home, ctx.profile).items():
+                changes.append(FileChange(claude / "agents" / f"{routing.PREFIX}{name}.md", "replace",
+                                          routing.claude_agent(name, tier),
+                                          f"subagent {routing.PREFIX}{name}: {tier['claude']['model'] or 'inherit'}, "
+                                          f"effort {tier['claude']['effort']}"))
         return changes
 
     def post_install(self, ctx: Ctx) -> List[str]:

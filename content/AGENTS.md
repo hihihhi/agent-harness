@@ -20,6 +20,13 @@ Define "done" as a command that can fail, first (a bug: a failing reproduction; 
 input, then a sample, then the full run). Make the smallest change, run the check, read the result,
 go back to where the evidence points. Same failure twice: change the approach (`work-loop` skill).
 
+## Model and effort
+
+Subagents `harness-quick`, `harness-standard`, `harness-deep`, `harness-review` each carry a model and effort
+chosen for the account. Hand mechanical sub-tasks to quick; a hard problem, or a check that failed twice the
+same way, to deep; finished non-trivial work to review before calling it done. Never above deep's effort
+unless the user asks.
+
 ## Knowledge
 
 Before the first step of a task, orient: read Environment below, then `kb_get` each index entry

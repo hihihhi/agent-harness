@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Dict, List
 
+from .. import routing
 from .base import Adapter, Ctx, FileChange, base_dir, mcp_servers, shared_skills, which
 
 
@@ -46,6 +47,12 @@ class CodexAdapter(Adapter):
             FileChange(codex / "config.toml", "merge-toml", tables,
                        "registers the harness MCP server; other settings untouched"),
         ]
+        if routing.available(ctx.content):          # one subagent per tier: model + effort from routing.toml
+            for name, tier in routing.resolve(ctx.content, ctx.home, ctx.profile).items():
+                changes.append(FileChange(codex / "agents" / f"{routing.PREFIX}{name}.toml", "replace",
+                                          routing.codex_agent(name, tier),
+                                          f"subagent {routing.PREFIX}{name}: {tier['codex']['model'] or 'default model'}, "
+                                          f"effort {tier['codex']['effort']}"))
         return changes + shared_skills(ctx)
 
 
