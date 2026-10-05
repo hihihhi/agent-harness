@@ -1,9 +1,11 @@
-# agent-harness: Shared Rules, Memory and a Command Guard for AI Coding Agents
+# agent-harness: Shared Rules, Memory, a Work Graph and a Command Guard for AI Coding Agents
 
 [![ci](https://github.com/oscar-chw/agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/oscar-chw/agent-harness/actions/workflows/ci.yml) [![lint](https://github.com/oscar-chw/agent-harness/actions/workflows/lint.yml/badge.svg)](https://github.com/oscar-chw/agent-harness/actions/workflows/lint.yml)
 
 **One standard-library install that gives Claude Code shared rules, memory, retrieval, lessons and a command guard, and gives
-six other AI coding tools the rules, the memory tools or both, as far as each supports them ([which tool gets what](docs/how-it-works.md#supported-tools)).**
+six other AI coding tools the rules, the memory tools or both, as far as each supports them ([which tool gets what](docs/how-it-works.md#supported-tools)).
+Since v0.3 it also carries a work graph: multi-step work as one markdown file per goal, where a step is done only
+when its gate command exits 0, run by the graph rather than reported by the model.**
 
 ```console
 $ harness --home $DEMO_HOME install --dry-run --tools claude-code
@@ -20,7 +22,7 @@ $ harness --home $DEMO_HOME install --yes --tools claude-code && harness --home 
 [ok] claude-code: $DEMO_HOME/.claude/CLAUDE.md
   ...
 [ok] MCP server answers tools/list within 5 s (14 tools)
-[ok] disk footprint 0.4 MB (cap 20 MB)
+[ok] disk footprint 0.5 MB (cap 20 MB)
 
 $ python3 content/hooks/guard.py --check "rm -rf ~"
 agent-harness guard blocked this: rm -r on ~ (the home directory). If it is really intended, ask the human to run it themselves.
@@ -30,7 +32,7 @@ $ python3 content/hooks/guard.py --check "git status && pytest -q"
 exit 0
 ```
 
-Output of `bash scripts/demo.sh` (2026-10-03, macOS, Python 3.9) with the per-file lines cut to `...`. It installs
+Output of `bash scripts/demo.sh` (2026-10-06, v0.3, macOS, Python 3.9) with the per-file lines cut to `...`. It installs
 into a throwaway home, printed as `$DEMO_HOME`, never into yours.
 
 **Quick start** (Python 3.9+, nothing else; `--dry-run` writes nothing):
@@ -49,7 +51,9 @@ restores them all.
 |---|---|---|
 | Recall of an earlier session, harness v0.1.1 → v0.2.0 (same account setup; v0.2.0 adds `session_search`) | **Claude 1/3 → 3/3, Codex 0/3 → 3/3** | historical, **private corpus**, one run per question, n=3 per tool; significance tests in [Results](#results). Plain's 0/3 is a floor: it cannot read past sessions. [eval/results/historical.md](eval/results/historical.md) |
 | Command guard (Claude Code), held out | **39/45 dangerous commands blocked (87%), 20/20 safe controls allowed**, with the guard as it was before the set existed; 40/45 (89%) after one fix made with the set in view | written by the same build session (2026-10-03, after reading the first review), not from the corpus it was fixed against (in-sample: 105/105, 108/108). [tests/test_guard_heldout.py](tests/test_guard_heldout.py) |
-| Tests, Python 3.9 | **270 passed**, 2 skipped, 21 expected failures (pinned guard gaps and held-out misses) | `python3 -m pytest -q tests eval`. On 3.11: 271 passed, 1 skipped (a TOML check needs `tomllib`; the other skip is a live check that needs `HARNESS_LIVE=1`) |
+| Command guard (Claude Code), against a second corpus written for a different guard | **150/231 → 221/221** dangerous blocked; this repo's own corpus **165/186 → 183/186** | v0.3. The corpus came from agentic-os's bash guard and had never been run against this one, so the first number is held-out; the second is after fixing with it in view. Ten of its cases encode that author's stricter personal policy and are listed, with reasons, in [tests/test_guard_cross.py](tests/test_guard_cross.py) |
+| Work graph (v0.3, from agentic-os) | **181 of 203 real nodes gated** across ten graphs; adversarially certified: 29 agents, 21 findings, 20 confirmed, all closed | the author's own use, **not an A/B eval**: so under the keep rule the `plan` tool ships **off** (`HARNESS_ENABLE=plan`). Its own suites came with it: [tests/workgraph](tests/workgraph) |
+| Tests, Python 3.9 | **811 passed**, 2 skipped, 2 expected failures (the two relative targets a `--check` call cannot resolve) | `python3 -m pytest -q tests eval`. v0.2 on 3.11 was 271 passed, 1 skipped; v0.3 was not re-run on 3.11 here, CI runs 3.9 and 3.12 |
 
 Provenance: the learning loop (`session_search`, `skill_manage`, the memory snapshot arm) follows the design of
 Hermes Agent; skills use the agentskills.io format; the tools talk to the harness over the Model Context Protocol.
@@ -85,6 +89,12 @@ uninstall; the safety guard goes into Claude Code only.
   `eval`, `$(...)` and heredocs that feed a shell, resolves a relative path against a `cd` earlier on the same
   line, classifies each target (root, home, a top-level home folder, a variable that may be empty, `..`), and
   fails closed on a payload it cannot parse. Standard library only, no subprocesses.
+- **The work graph** (`src/agent_harness/workgraph`, v0.3): one markdown file per goal, `- [ ] 3. title |
+  needs: 1,2 | gate: <command>`. A node is done only when its gate exits 0, run by the graph; a failed gate
+  appends its output and returns the node to pending, so there is no failed state to get stuck in. Claims are
+  atomic with a lease, so parallel sessions never take the same node; a worker that rewrites its own gate
+  script, forges an `APPROVED`, or edits the plan file mid-round is caught and the round voided. Every gate
+  passes the guard before it runs: the graph runs gates itself, so they never reach the PreToolUse hook.
 - **Ship by a keep rule:** accuracy no worse, a measurable gain, token overhead within +15%; parts that fail stay
   off by default. The private eval reports call it pre-set, but no committed record here shows it predates the
   2026-09-30 eval (its thresholds first appear in `eval/report.py` on 2026-10-03).
@@ -121,7 +131,11 @@ column is a floor, not a competitor; the harness's own effect is v0.1.1 against 
   v0.1.1 build scored 20/20 in its own eval and 18/20 here.
 - **Tokens.** v0.2.0 added 495 tokens per request to Claude's fixed context (37,173 → 37,668), about 22% of the
   2,291-token harness rules; the keep rule's measure, the paired median token ratio against v0.1.1, was 1.04
-  (limit 1.15). Most of the gap to plain is the author's other plugins, not the harness. In the v0.1.1 eval
+  (limit 1.15). Most of the gap to plain is the author's other plugins, not the harness, and v0.3 measures it:
+  a fresh install adds **8.8 KB, about 2,450 tokens**, per Claude request (rules, every advertised tool
+  definition, skill descriptions, server instructions), an upper bound since Claude Code defers tool
+  definitions until used. That is about an eighth of the 19,808-token gap and within the keep rule's +15% of
+  plain (2,605 tokens); [tests/test_context_budget.py](tests/test_context_budget.py) holds it there, part by part. In the v0.1.1 eval
   the paired median token ratio, harness over plain, was 1.24 for Claude and 0.82 for Codex, down from 1.76
   and 1.82 for v0.1.0 (same file, "accuracy and tokens").
 - **Shipped off by the keep rule:** `memory_snapshot` and `skill_nudge` (no gain); `run_checks` and `check_guard`
@@ -143,9 +157,18 @@ The set and the runner stay, so anyone with those tools can run it.
 fixed the guard, after it had read the first review and before the cd fix; two entries were replaced after it):
 **39/45 blocked (87%)**, 20/20 allowed, with the guard as it was before the set existed. The commit that added
 the set (b7e3ab4) also fixed one of its commands, `cd /home && rm -rf *`, so the set is no longer held out for
-that one; counting it, 40/45 (89%). The 5 remaining misses are pinned as expected failures: `rsync --delete` into
-`$HOME/`, `echo ~ | xargs rm -rf`, `truncate` of a system file, inline Python, inline Perl. Reproduce (prints both rates):
-`python3 tests/test_guard_heldout.py --rate`. **In-sample** ([tests/test_guard_cases.py](tests/test_guard_cases.py),
+that one; counting it, 40/45 (89%). The 5 remaining misses (`rsync --delete` into `$HOME/`,
+`echo ~ | xargs rm -rf`, `truncate` of a system file, inline Python, inline Perl) were closed in v0.3, with the
+set in view, so the held-out figure stays 39/45. Reproduce (prints both rates):
+`python3 tests/test_guard_heldout.py --rate`.
+
+**v0.3, a second corpus.** agentic-os, the author's Claude-only harness, had its own bash guard and 426 cases
+written against it. Each corpus was scored as the other guard's held-out set before either changed: the bash
+guard caught 168/186 of this repo's dangerous commands, this guard 150/231 of agentic-os's. Neither dominated:
+the bash guard missed interpreter wrapping (`bash <(...)`, a literal `eval`), this one missed tampering with the
+guard itself, persistence, credential reads, deletion through an interpreter and computed targets. After
+merging: 221/221 and 183/186, with every safe control in both corpora allowed except agentic-os's `sudo` cases,
+which this guard blocks by design. The union is kept in [tests/test_guard_cross.py](tests/test_guard_cross.py). **In-sample** ([tests/test_guard_cases.py](tests/test_guard_cases.py),
 the set the guard was fixed against): 105/105 blocked, 108/108 allowed, which measures fit. It includes 19 commands two
 reviews found, such as `cd ~ && rm -rf *`, `command -p rm -rf ~`,
 `bash <(echo 'rm -rf ~')` and `git push --mirror`; a separate list of 21 former bypasses is all blocked too. Details and the
@@ -211,6 +234,7 @@ flowchart LR
 |---|---|
 | `src/agent_harness/cli.py`, `installer.py`, `adapters/` | install, update, uninstall, doctor; one adapter per tool |
 | `src/agent_harness/mcp/` | the MCP server: retrieval, memory, state, sessions, skills, checks |
+| `src/agent_harness/workgraph/` | the work graph (v0.3): the `plan` engine, the substance gate for analyse/research/plan, the `plan` MCP tool |
 | `content/` | the rules, skills, prompts and hooks that get installed |
 | `eval/` | the A/B eval: runner, report generator, SYNTHETIC questions and corpus |
 | `tests/` | the harness's tests, the guard corpus and the held-out guard set |
@@ -226,7 +250,11 @@ the build contract: [CONTRACT.md](CONTRACT.md).
 - **A guard that fails closed.** A hook payload the guard cannot parse (not JSON, or a command that is not a
   string) is blocked, not waved through: an agent that hits a false block can ask the human, while a missed
   `rm -rf ~` cannot be undone. The cost is false positives (all `sudo`, fork-bomb text inside a quoted note),
-  and it is a seat belt, not a sandbox: 16 known gaps and 5 held-out misses are pinned in the tests.
+  and it is a seat belt, not a sandbox: 2 known gaps are pinned in the tests (v0.2 had 16 and 5 held-out misses).
+- **Gates are judged too.** The work graph runs each gate as a shell command itself, so a gate never reaches
+  the PreToolUse hook. Every gate goes through the same guard first; a refused gate is never run and is
+  recorded as a failed attempt. With no guard to be found, gates are refused, not run unguarded
+  (`PLAN_GUARD=off` is the named opt-out). The cost is that a legitimately destructive gate needs a human.
 - **One rules file for every tool that takes one.** Each adapter translates `content/AGENTS.md`, so the tools cannot drift
   apart and a fix lands everywhere at once. The rules are paid for in every request, so a test caps them at 60
   lines; longer guidance lives in skills. The cost is a lowest common denominator: tool-specific features go
@@ -240,7 +268,8 @@ This harness replaces earlier one-tool setups:
 [copilot-setup](https://github.com/Oscar-Codespace/copilot-setup) (both started April 2026, now
 archived), then codex-setup (May 2026), agentic-os (July 2026) and claude-control (July 2026),
 which are private. Each configured one tool; agent-harness installs one set of rules, memory and
-checks for seven.
+checks for seven. v0.3 (October 2026) merges in agentic-os's work graph and its guard corpus, so the
+enforcement it built for one tool is available, behind the keep rule, to all seven.
 
 ## Limits
 
@@ -250,9 +279,13 @@ checks for seven.
   Only v0.1.1 against v0.2.0 isolates the harness, and the repo does not compare against Claude Code's own
   `CLAUDE.md` memory, `--resume`, or a plain grep over past transcripts.
 - **Two of the seven tools were measured;** the other adapters are tested for the files they write only.
-- **The guard is a seat belt, not a sandbox.** Open gaps: targets computed by `$(...)`, inline code in another
-  interpreter, login-script and cron persistence, piped input to `xargs`, and a glob after `cd` into a folder
-  named by a variable (`cd $DIR && rm -rf *` is judged as written). `sudo` is blocked outright.
+- **The guard is a seat belt, not a sandbox.** v0.3 closed the computed-target, inline-interpreter,
+  persistence and `xargs` gaps. Still open: a glob after `cd` into a folder named by a variable (`cd $DIR && rm -rf
+  *` is judged as written), and a relative target in a `--check` call, which has no working directory to resolve
+  it against (a real hook payload does). `sudo` is blocked outright.
+- **The work graph is not A/B evaluated.** Its evidence is the author's own use (181 of 203 nodes) and an
+  adversarial certification, not a gain measured against plain, so the `plan` tool ships off. `plan run`
+  dispatches Claude Code workers only; in the other tools the graph is driven one node at a time.
 - **`--home DIR` and `HOME=DIR` differ:** only `HOME=DIR` installs VS Code extensions (a download) into the folder.
 - **Packaging was checked offline only:** the wheel was built and installed with Python 3.11 (setuptools 83) by
   `pip install --no-index --no-deps --no-build-isolation --target DIR .`; it needs setuptools>=61 (macOS's

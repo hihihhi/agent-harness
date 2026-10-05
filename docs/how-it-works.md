@@ -146,6 +146,11 @@ The rules ask for good behaviour; the harness enforces a floor where the tool al
   recall at the same tokens, and the nudge made Claude save skills but its repeat runs were 2/3 correct at
   1.42x tokens. `session_search` and `skill_manage` ship on: past-conversation recall went from 1/6 to 6/6,
   and Codex saved and reused a skill in 3/3 repeated procedures; Claude saved none unprompted.
+- **The work graph, off by default (v0.3)**: the `plan` MCP tool drives `src/agent_harness/workgraph`, a
+  graph of gated nodes merged in from agentic-os (181 of 203 real nodes gated there, and adversarially
+  certified). Its evidence is use and an attack, not a gain measured against plain, so under the keep rule it
+  ships off: `HARNESS_ENABLE=plan`. The engine's protections (gates judged by the guard, tamper detection,
+  irreversible nodes held) do not depend on the switch. Off, it adds nothing to any request.
 - **Memory recall** (Claude Code): relevant memories are attached to each prompt, within a strict
   time limit, so the agent does not need to search for them.
 
@@ -215,7 +220,7 @@ disagreements. It counted 24 of them as gaps, now fixed; the repository pins 21 
 |---|---|---|
 | the author's own machine policy: network and VPN control, macOS system tools, the author's own agent settings | 39 | out of scope for a catastrophic-command guard |
 | the harness is stricter (all `sudo`, SSH key flags, `find ..`, text that looks like a fork bomb) | 14 | by design; the fork-bomb text in a quoted note is a known false positive |
-| open gaps: targets computed by `$(...)`, inline code in another interpreter, login-script and cron persistence, `find \| xargs` | 18 | 16 representative commands pinned as expected failures in the tests |
+| open gaps: targets computed by `$(...)`, inline code in another interpreter, login-script and cron persistence, `find \| xargs` | 18 | 16 representative commands pinned as expected failures in the tests; all closed in v0.3 |
 | the private suite asks about single files and project paths the harness allows (`rm ~/Desktop/note.txt`) | 9 | by design |
 | an empty `{}` payload | 1 | cannot be told from a non-shell tool |
 
@@ -235,6 +240,27 @@ read the first review and before the cd fix (two entries were replaced after it)
 (a test checks that). Result: **39 of 45 dangerous commands blocked (87%), 20 of 20 safe controls allowed**,
 with the guard as it was before the set existed. The commit that added the set also fixed one of its commands,
 `cd /home && rm -rf *`, so the set is no longer held out for that one; counting it, 40 of 45 (89%).
-The 5 remaining misses are pinned as expected failures: `rsync --delete` into a destination spelled with `$HOME`, `echo ~
-| xargs rm -rf` (piped input to `xargs`), `truncate` of a system file, and inline Python and Perl code. Run
-`python3 tests/test_guard_heldout.py --rate` to reproduce both rates.
+The 5 remaining misses (`rsync --delete` into a destination spelled with `$HOME`, `echo ~ | xargs rm -rf`,
+`truncate` of a system file, inline Python and Perl) were closed in v0.3 with the set in view, so the held-out
+figure stays 39 of 45. Run `python3 tests/test_guard_heldout.py --rate` to reproduce both rates.
+
+**v0.3: the whole corpus, and what changed in scope.** The comparison above used cases extracted from the
+author's bash guard. In v0.3 that suite's 426 cases were exported whole, usernames replaced, as
+[tests/guard_corpus_agentic_os.py](../tests/guard_corpus_agentic_os.py), and scored as a held-out set before any
+change: 150 of 231 dangerous commands blocked. After the merge: 221 of 221, and 183 of 186 on this repo's
+corpus. Three v0.2 scoping decisions above were deliberately reversed, each for a reason that is not the
+author's personal policy:
+
+- **The guard protects itself.** Writes onto `~/.claude/hooks`, `~/.claude/settings.json` and the harness's own
+  hook are blocked (adding execute, `chmod +x`, is not). v0.2 counted "the author's own agent settings" out of
+  scope, but an agent that can overwrite the guard has turned it off, whoever's machine it is.
+- **Taking the network down** (an interface, a VPN daemon, Wi-Fi, `launchctl bootout`) is blocked: it strands a
+  remote session the agent may itself be running over. v0.2 had it as the author's machine policy.
+- **Stricter by design, relaxed:** `scp`/`sftp`/`rsync -i <key>` uses a key the way `ssh -i` (always allowed)
+  does; copying the key as an operand is still blocked. `find ..` and a top-level home folder with a name filter
+  (`-name '*.pyc'`) is clean-up. Recursive `chmod`/`chown` on a top-level home folder is reversible. A fork bomb
+  written into a note as quoted text is data. `sudo` stays blocked outright.
+
+The cases that remain the author's personal policy (anything two levels under home, a package-manager tree,
+read-only Wi-Fi diagnostics, a `sudo` rule that judges what runs) are listed with reasons in
+[tests/test_guard_cross.py](../tests/test_guard_cross.py) rather than forced into this guard.
