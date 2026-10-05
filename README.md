@@ -230,6 +230,15 @@ the build contract: [CONTRACT.md](CONTRACT.md).
   through the adapters.
 - **Measured, and not adopted.** Four candidates failed the keep rule and ship off by default (Results).
 
+### History
+
+This harness replaces earlier one-tool setups:
+[claude-setup](https://github.com/Oscar-Codespace/claude-setup) and
+[copilot-setup](https://github.com/Oscar-Codespace/copilot-setup) (both started April 2026, now
+archived), then codex-setup (May 2026), agentic-os (July 2026) and claude-control (July 2026),
+which are private. Each configured one tool; agent-harness installs one set of rules, memory and
+checks for seven.
+
 ## Limits
 
 - **Private corpus, small n.** The A/B results cannot be reproduced from this repository; the public synthetic
