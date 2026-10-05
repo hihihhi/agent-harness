@@ -18,64 +18,48 @@ then call on the shared MCP server and its local stores.
 
 ```mermaid
 flowchart LR
-    subgraph src["content/ in this repo"]
-        RULES["AGENTS.md<br/>the one rulebook"]
-        SKILLS["skills/*/SKILL.md"]
+    INSTALL["harness install<br/>adapters/<br/>backs up files"]
+    subgraph tools["seven tools"]
+        CC["Claude Code<br/>rules, MCP,<br/>skills, guard"]
+        CX["Codex<br/>rules, MCP,<br/>skills"]
+        CP["Copilot<br/>rules, MCP,<br/>prompt files"]
+        CU["Cursor<br/>MCP, rules<br/>per project"]
+        GM["Gemini CLI<br/>rules, MCP"]
+        CD["Claude desktop<br/>MCP only"]
+        JP["JupyterLab<br/>MCP only"]
     end
-    INSTALL["harness install<br/>installer.py + adapters/<br/>backs up each file"]
-    AGS[("~/.agents/skills")]
-    subgraph tools["seven AI tools"]
-        CC["Claude Code"]
-        CX["Codex"]
-        CP["GitHub Copilot"]
-        CU["Cursor"]
-        GM["Gemini CLI"]
-        CD["Claude desktop"]
-        JP["JupyterLab, Jupyter AI"]
+    GUARD["guard.py<br/>exit 2 blocks"]
+    subgraph srv["mcp/server.py"]
+        KB["kb_search<br/>kb_get"]
+        SS["session_search"]
+        MEM["mem_*<br/>lesson_*"]
+        NT["notices"]
+        SM["skill_manage"]
     end
-    GUARD["content/hooks/guard.py<br/>Claude Code only"]
-    subgraph mcp["mcp/server.py, stdio MCP server"]
-        KB["kb_search, kb_get<br/>mcp/kb.py"]
-        SS["session_search<br/>mcp/sessions.py"]
-        MEM["mem_*, lesson_*<br/>mcp/memory.py"]
-        NT["notices<br/>notice_line()"]
-        SM["skill_manage<br/>mcp/skills.py"]
-    end
-    subgraph store["~/.agent-harness, local files"]
-        IDX[("index.sqlite<br/>FTS5, BM25")]
-        MJ[("memory/, lessons/<br/>one JSON per item")]
+    subgraph store["local files"]
+        IDX[("index.sqlite<br/>FTS5")]
+        MJ[("memory/<br/>lessons/")]
         NJ[("notices.json")]
+        LRN[("learned<br/>skills")]
     end
-    LRN[("~/.agents/skills/learned")]
-    TR[("Claude Code and Codex<br/>transcripts")]
+    TR[("Claude Code,<br/>Codex<br/>transcripts")]
 
-    RULES -- "rules text" --> INSTALL
-    SKILLS -- "skill folders" --> INSTALL
-    INSTALL == "CLAUDE.md, MCP entry,<br/>skills link, guard hook" ==> CC
-    INSTALL -- "AGENTS.md,<br/>MCP in config.toml" --> CX
-    INSTALL -- "instructions,<br/>prompt files, MCP" --> CP
-    INSTALL -- "MCP; rules<br/>with --project" --> CU
-    INSTALL -- "GEMINI.md, MCP" --> GM
-    INSTALL -- "MCP entry only" --> CD
-    INSTALL -- "mcp_settings.json only" --> JP
-    INSTALL -- "copies skills" --> AGS
-    AGS -. "read natively by Codex,<br/>Gemini, Cursor, Copilot" .-> tools
-    CC == "PreToolUse, every Bash call:<br/>exit 2 blocks it" ==> GUARD
-    tools -- "tools/call over stdio" --> mcp
-    KB -- "sections split<br/>at headings" --> IDX
-    SS -- "reads only appended bytes,<br/>secrets masked" --> TR
-    SS -- "user and assistant text" --> IDX
-    MEM -- "near-duplicates merged" --> MJ
-    SM -- "writes SKILL.md" --> LRN
-    NT -- "first pending line,<br/>once a day, into<br/>server instructions" --> NJ
+    INSTALL == "writes<br/>config" ==> tools
+    CC == "each Bash<br/>call" ==> GUARD
+    tools -- "MCP<br/>stdio" --> srv
+    KB -- "sections,<br/>BM25" --> IDX
+    SS -- "new<br/>messages" --> IDX
+    TR -- "secrets<br/>masked" --> SS
+    MEM -- "JSON<br/>per item" --> MJ
+    NT -- "once<br/>a day" --> NJ
+    SM -- "SKILL.md" --> LRN
 
     classDef data fill:#dbeafe,stroke:#1d4ed8,color:#0b1220
     classDef step fill:#f1f5f9,stroke:#475569,color:#0b1220
     classDef gate fill:#fef3c7,stroke:#b45309,color:#0b1220
     classDef ext  fill:#f8fafc,stroke:#94a3b8,color:#0b1220,stroke-dasharray:4 3
     classDef key  fill:#ede9fe,stroke:#6d28d9,color:#0b1220,stroke-width:2px
-    class RULES,SKILLS data
-    class AGS,IDX,MJ,NJ,LRN data
+    class IDX,MJ,NJ,LRN data
     class KB,MEM,SS,SM,NT step
     class CX,CP,CU,GM,CD,JP ext
     class TR ext
@@ -83,8 +67,10 @@ flowchart LR
     class GUARD gate
 ```
 
-Where in the code: `src/agent_harness/installer.py`, `src/agent_harness/adapters/*.py`, `src/agent_harness/mcp/`
-(`server.py`, `kb.py`, `memory.py`, `sessions.py`, `skills.py`), `content/hooks/guard.py`.
+Where in the code: `src/agent_harness/installer.py`, `src/agent_harness/adapters/*.py` (skills are copied to
+`~/.agents/skills`, which Codex, Gemini CLI, Cursor and Copilot read natively), `src/agent_harness/mcp/`
+(`server.py`, `kb.py`, `memory.py`, `sessions.py`, `skills.py`; stores under `~/.agent-harness`, learned skills
+under `~/.agents/skills/learned`), `content/hooks/guard.py`.
 
 ## 2. The guard's decision for one command
 
@@ -93,61 +79,47 @@ Substitution bodies, echoed text piped into a shell and `bash -c` / `eval` bodie
 
 ```mermaid
 flowchart TB
-    HOOK["Claude Code PreToolUse<br/>JSON payload on stdin"]
-    CLI["guard.py --check CMD"]
-    PARSE{"payload is a<br/>JSON object?"}
-    KIND{"tool_input.command?"}
-    FILE{"file_path is a<br/>credential file?"}
-    subgraph CHECK["check(cmd, depth), nested up to depth 5"]
+    HOOK["PreToolUse payload<br/>or guard.py --check"]
+    PARSE{"JSON object, command<br/>a string or list?"}
+    subgraph CHECK["check(cmd, depth ≤ 5)"]
         FORK["fork-bomb patterns<br/>quoted text is data"]
-        COMP["check_computed<br/>name or target from $(...)"]
-        SUB["substitution bodies<br/>checked again"]
-        TOK["tokenize, pipelines<br/>heredoc bodies dropped<br/>unless fed to a shell"]
-        PIPES["pipes into a shell<br/>curl from untrusted host,<br/>base64 -d, echo TEXT"]
-        XA["check_xargs<br/>find or echo into xargs rm"]
-        SEG["each segment: unwrap<br/>env, timeout, xargs, command"]
-        SC["check_segment<br/>sudo, rm -r, dd, mv,<br/>rsync --delete, force-push"]
+        COMP["check_computed<br/>names from $(...)"]
+        SUB["$(...) and backtick<br/>bodies"]
+        TOK["tokenize, split at<br/>; && and pipes"]
+        PIPES["pipes into a shell<br/>curl, base64 -d, echo"]
+        XA["check_xargs<br/>find or echo into rm"]
+        SC["check_segment<br/>sudo, rm -r, dd, mv,<br/>force-push"]
         PROT["check_protected<br/>protected trees"]
-        NEST["bash -c, eval:<br/>the inner command"]
     end
-    PF[("protected-paths file<br/>one absolute path per line")]
+    PF[("protected-paths file<br/>absolute paths")]
     BLOCK["exit 2<br/>reason on stderr"]
-    ALLOW["exit 0<br/>the command runs"]
+    ALLOW["exit 0<br/>command runs"]
 
-    HOOK -- "stdin" --> PARSE
+    HOOK -- "stdin JSON" --> PARSE
     PARSE -- "no: fail closed" --> BLOCK
-    PARSE -- "yes" --> KIND
-    KIND == "string or list:<br/>verdict(cmd, cwd)" ==> FORK
-    KIND -- "another type: fail closed" --> BLOCK
-    KIND -- "absent" --> FILE
-    FILE -- "yes" --> BLOCK
-    FILE -- "no" --> ALLOW
-    CLI == "verdict(cmd)" ==> FORK
-    FORK == "no pattern" ==> COMP
-    COMP == "names readable" ==> SUB
-    SUB -. "check(body, depth+1)" .-> FORK
-    SUB == "bodies pass" ==> TOK
-    TOK == "segments split at<br/>; && and pipes" ==> PIPES
-    PIPES -. "echoed TEXT:<br/>check(TEXT, depth+1)" .-> FORK
-    PIPES == "nothing piped<br/>into sh unseen" ==> XA
-    XA == "no critical target" ==> SEG
-    SEG == "command name, args" ==> SC
-    SC -- "shell -c or eval" --> NEST
-    NEST -. "check(inner, depth+1)" .-> FORK
-    SC == "no critical target" ==> PROT
-    PF -- "absolute paths" --> PROT
-    CHECK -- "raises Blocked" --> BLOCK
+    PARSE == "yes" ==> FORK
+    FORK == "none" ==> COMP
+    COMP == "readable" ==> SUB
+    SUB -. "depth+1" .-> FORK
+    SUB == "pass" ==> TOK
+    TOK == "segments" ==> PIPES
+    PIPES -. "echoed text,<br/>depth+1" .-> FORK
+    PIPES == "none unseen" ==> XA
+    XA == "safe targets" ==> SC
+    SC -. "bash -c, eval:<br/>depth+1" .-> FORK
+    SC == "safe targets" ==> PROT
+    PF -- "paths" --> PROT
+    CHECK -- "Blocked" --> BLOCK
     PROT == "nothing raised" ==> ALLOW
 
     classDef data fill:#dbeafe,stroke:#1d4ed8,color:#0b1220
-    classDef step fill:#f1f5f9,stroke:#475569,color:#0b1220
     classDef gate fill:#fef3c7,stroke:#b45309,color:#0b1220
     classDef out  fill:#dcfce7,stroke:#15803d,color:#0b1220
     classDef ext  fill:#f8fafc,stroke:#94a3b8,color:#0b1220,stroke-dasharray:4 3
     classDef key  fill:#ede9fe,stroke:#6d28d9,color:#0b1220,stroke-width:2px
-    class HOOK,CLI ext
-    class PARSE,KIND,FILE,BLOCK gate
-    class FORK,COMP,SUB,TOK,PIPES,XA,SEG,SC,PROT,NEST key
+    class HOOK ext
+    class PARSE,BLOCK gate
+    class FORK,COMP,SUB,TOK,PIPES,XA,SC,PROT key
     class PF data
     class ALLOW out
 ```
@@ -162,68 +134,53 @@ The public phase uses the same runner on the SYNTHETIC set and has no results ye
 
 ```mermaid
 flowchart TB
-    QS[("question set, --questions<br/>historical: private corpus<br/>public: SYNTHETIC")]
-    subgraph P1["pass 1: harness 0.1.1 installed"]
-        PL["plain<br/>claude --safe-mode,<br/>codex --ignore-user-config"]
-        A011["A011<br/>harness 0.1.1"]
-    end
-    subgraph P2["pass 2: harness 0.2.0 installed"]
-        A02["A02<br/>harness 0.2.0"]
-        A02s["A02s<br/>+ memory_snapshot"]
-        A02n["A02n, Claude only<br/>+ skill_nudge"]
-    end
-    RUN["runner.py v02:claude, v02:codex<br/>one CLI session per<br/>question and condition"]
-    VER{"installed_version()<br/>matches the pass?"}
-    PAIR["pair(): session 1, then<br/>a fresh session 2"]
-    QUAR[("quarantine/<br/>whatever a run wrote")]
+    QS[("question set<br/>--questions")]
+    COND["pass 1, 0.1.1 installed:<br/>plain, A011<br/>pass 2, 0.2.0 installed:<br/>A02, A02s, A02n"]
+    RUN["runner.py<br/>one CLI session per<br/>question, condition"]
+    VER{"installed_version()<br/>matches?"}
+    STOP["SystemExit<br/>wrong version"]
+    PAIR["pair(): session 1,<br/>fresh session 2"]
+    QUAR[("quarantine/<br/>each run's writes")]
     RES[("results.jsonl")]
-    REP["report.py --v02<br/>re-grades every answer"]
+    REP["report.py --v02<br/>re-grades answers"]
+    MISS["exit 1<br/>runs missing"]
     subgraph KEEP["keep rule, part by part"]
-        K1{"old kinds: A02 ≥ A011<br/>tokens ≤ 1.15x A011"}
-        K2{"session_search: +2 recall,<br/>called at least once"}
-        K2b{"skills: +2 or ≤ 0.80x tokens,<br/>created and read"}
-        K3{"arm: more correct<br/>than A02, same questions"}
+        K1{"A02 ≥ A011 correct,<br/>tokens ≤ 1.15x"}
+        K2{"session_search:<br/>+2 recall, called"}
+        K2b{"skills: +2 or<br/>≤ 0.80x tokens"}
+        K3{"arm: more correct<br/>than A02?"}
     end
-    SHIP["SHIP, on by default<br/>session_search, skill_manage"]
-    DROP["DROP, stays off<br/>memory_snapshot, skill_nudge"]
-    STOP["runner exits<br/>needs harness X installed"]
-    MISS["exit 1<br/>a group of runs missing"]
-    PUB["public phase: P vs H<br/>no results yet"]
+    SHIP["SHIP, on by default<br/>session_search,<br/>skill_manage"]
+    DROP["DROP, stays off<br/>memory_snapshot,<br/>skill_nudge"]
 
-    QS -- "same questions" --> RUN
-    P1 -- "conditions" --> RUN
-    P2 -- "conditions" --> RUN
-    RUN -- "version check" --> VER
-    VER -- "no: SystemExit" --> STOP
-    VER == "yes: one record per run" ==> RES
-    VER -- "memory, recall, repeat" --> PAIR
-    PAIR -- "session 1's writes kept<br/>for session 2, then moved" --> QUAR
-    VER -- "any other run:<br/>its writes moved" --> QUAR
+    QS -- "questions" --> RUN
+    COND -- "condition" --> RUN
+    RUN -- "per run" --> VER
+    VER -- "no" --> STOP
+    VER == "yes" ==> RES
+    VER -- "recall, memory,<br/>repeat" --> PAIR
+    PAIR -- "then moved" --> QUAR
     RES == "all runs" ==> REP
-    REP -- "runs missing" --> MISS
-    REP == "accuracy, paired<br/>median tokens" ==> K1
+    REP -- "a group short" --> MISS
+    REP == "accuracy,<br/>tokens" ==> K1
     K1 == "pass" ==> K2
     K1 == "pass" ==> K2b
-    K1 -- "fail: ship nothing new" --> DROP
+    K1 -- "fail" --> DROP
     K2 == "pass" ==> SHIP
     K2b == "pass" ==> SHIP
-    K2 -- "no gain" --> DROP
-    REP -- "arms vs A02" --> K3
+    REP -- "arms" --> K3
     K3 -- "no gain" --> DROP
-    QS -. "same runner, Claude only" .-> PUB
 
     classDef data fill:#dbeafe,stroke:#1d4ed8,color:#0b1220
     classDef step fill:#f1f5f9,stroke:#475569,color:#0b1220
     classDef gate fill:#fef3c7,stroke:#b45309,color:#0b1220
     classDef out  fill:#dcfce7,stroke:#15803d,color:#0b1220
-    classDef ext  fill:#f8fafc,stroke:#94a3b8,color:#0b1220,stroke-dasharray:4 3
     classDef key  fill:#ede9fe,stroke:#6d28d9,color:#0b1220,stroke-width:2px
     class QS,QUAR,RES data
-    class PL,A011,A02,A02s,A02n,PAIR step
+    class COND,PAIR step
     class RUN,REP key
     class VER,K1,K2,K2b,K3,STOP,MISS gate
     class SHIP,DROP out
-    class PUB ext
 ```
 
 Where in the code: `eval/runner.py` (`plan_for`, `v02`, `pair`, `quarantine`, `public`), `eval/report.py`
@@ -236,24 +193,23 @@ Which earlier setups agent-harness replaced, and what moved between its tagged v
 README's (Results, What I learned).
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph before["earlier setups, one tool each"]
-        CS["claude-setup<br/>April 2026, archived"]
-        PS["copilot-setup<br/>April 2026, archived"]
-        XS["codex-setup<br/>May 2026, private"]
-        AO["agentic-os<br/>July 2026, private<br/>Claude only"]
-        CTL["claude-control<br/>July 2026, private"]
+        CS["claude-setup<br/>Apr 2026<br/>archived"]
+        PS["copilot-setup<br/>Apr 2026<br/>archived"]
+        XS["codex-setup<br/>May 2026<br/>private"]
+        CTL["claude-control<br/>Jul 2026<br/>private"]
+        AO["agentic-os<br/>Jul 2026<br/>private"]
     end
-    subgraph ah["agent-harness, seven tools"]
-        V010["v0.1.0<br/>rules 4,925 tokens"]
-        V011["v0.1.1<br/>lean rules 2,291 tokens"]
-        V020["v0.2.0<br/>session_search, skill_manage"]
-        V030["v0.3.0<br/>work graph, off by default"]
-    end
-    before -- "replaced by one install:<br/>rules, memory, checks" --> V010
+    V010["agent-harness v0.1.0<br/>rules 4,925 tokens"]
+    V011["v0.1.1<br/>lean rules 2,291 tokens"]
+    V020["v0.2.0<br/>session_search,<br/>skill_manage"]
+    V030["v0.3.0<br/>work graph,<br/>off by default"]
+
+    before -- "replaced by one install<br/>for seven tools" --> V010
     V010 == "rules cut 53%" ==> V011
-    V011 == "kept by the keep rule:<br/>recall 1/6 to 6/6" ==> V020
-    V020 == "guard scored on<br/>the agentic-os corpus" ==> V030
+    V011 == "recall 1/6 to 6/6,<br/>kept by the keep rule" ==> V020
+    V020 == "guard scored on<br/>agentic-os corpus" ==> V030
     AO -- "work graph,<br/>426 guard cases" --> V030
 
     classDef step fill:#f1f5f9,stroke:#475569,color:#0b1220
