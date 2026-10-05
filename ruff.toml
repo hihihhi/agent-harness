@@ -1,0 +1,3 @@
+# Correctness-only lint (syntax errors, pyflakes). Style is not enforced: README evidence cites line numbers.
+[lint]
+select = ["E9", "F"]

@@ -24,7 +24,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Iterator, List, Optional, Tuple
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))

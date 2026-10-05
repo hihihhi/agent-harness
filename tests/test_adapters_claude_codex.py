@@ -20,7 +20,7 @@ from agent_harness import installer as I  # noqa: E402
 from agent_harness.adapters import all_adapters  # noqa: E402
 from agent_harness.adapters.claude_code import ClaudeCodeAdapter  # noqa: E402
 from agent_harness.adapters.codex import CodexAdapter  # noqa: E402
-from test_installer import CANARY, make_source, run, snapshot  # noqa: E402
+from test_installer import CANARY, make_source, run  # noqa: E402
 
 
 class Ctxd(unittest.TestCase):

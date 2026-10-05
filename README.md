@@ -1,5 +1,7 @@
 # agent-harness
 
+[![ci](https://github.com/hihihhi/agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/hihihhi/agent-harness/actions/workflows/ci.yml) [![lint](https://github.com/hihihhi/agent-harness/actions/workflows/lint.yml/badge.svg)](https://github.com/hihihhi/agent-harness/actions/workflows/lint.yml)
+
 **One standard-library install that gives Claude Code shared rules, memory, retrieval, lessons and a command guard, and six
 other AI coding tools the rules and/or memory tools each can take ([which tool gets what](docs/how-it-works.md#supported-tools)).**
 

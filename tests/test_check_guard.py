@@ -1,5 +1,4 @@
 """check_guard (D3): asks before an existing test/gate loses an assertion, gains a skip, or a tolerance moves."""
-import io
 import json
 import os
 import shutil
