@@ -23,9 +23,18 @@ scan_text() {  # stdin -> matching lines on stdout
   return 0
 }
 scan_ident() {
-  grep -nE -- "$IDENT" | grep -vEi -- "$ALLOW"
-  [ -n "$EXTRA" ] && grep -nEi -- "$EXTRA"
+  # Read stdin ONCE. This used to grep stdin twice; the first grep consumed all of it, so the EXTRA
+  # patterns ran over nothing and could never match (found in v0.3 by planting a word and seeing PASS).
+  local in; in=$(cat)
+  printf '%s\n' "$in" | grep -nE -- "$IDENT" | grep -vEi -- "$ALLOW"
+  [ -n "$EXTRA" ] && printf '%s\n' "$in" | grep -nEi -- "$EXTRA"
   return 0
+}
+
+scan_both() {  # stdin -> both scanners, each reading its own copy
+  local in; in=$(cat)
+  printf '%s\n' "$in" | scan_text
+  printf '%s\n' "$in" | scan_ident
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -33,8 +42,14 @@ if [ "${1:-}" = "--self-test" ]; then
   clean="the key is read from the environment variable ANTHROPIC_API_KEY"
   a=$(printf '%s\n' "$planted" | scan_text); b=$(printf '%s\n' "$clean" | scan_text)
   c=$(printf 'ssh to 192.168.1.20\n' | scan_ident)
-  [ -n "$a" ] && [ -z "$b" ] && [ -n "$c" ] && { echo "SELF-TEST: PASS (planted key and LAN address caught, clean line passed)"; exit 0; }
-  echo "SELF-TEST: FAIL"; exit 1
+  # The two shapes that were silently dead before v0.3: an EXTRA pattern, and an identifier reached
+  # through the same pipe-into-both-scanners the history scan uses.
+  d=$(printf 'the canaryhost box\n' | EXTRA='canaryhost' scan_ident)
+  e=$(printf 'clean line\nssh to 192.168.1.20\n' | scan_both)
+  [ -n "$a" ] && [ -z "$b" ] && [ -n "$c" ] && [ -n "$d" ] && [ -n "$e" ] && {
+    echo "SELF-TEST: PASS (planted key, LAN address, an EXTRA pattern and a piped identifier caught; clean line passed)"
+    exit 0; }
+  echo "SELF-TEST: FAIL (key=${a:+ok} clean=${b:-ok} lan=${c:+ok} extra=${d:+ok} piped=${e:+ok})"; exit 1
 fi
 
 fail=0
@@ -49,7 +64,11 @@ done <<< "$files"
 
 # history: every added line in every commit
 if git rev-parse --git-dir >/dev/null 2>&1 && git rev-parse HEAD >/dev/null 2>&1; then
-  hist=$(git log -p --all --no-color | grep -E '^\+' | grep -v '^+++' | { scan_text; scan_ident; })
+  # scan_both, not `{ scan_text; scan_ident; }`: in that form scan_text consumed the whole pipe and the
+  # identifier scan of history read nothing, so history was only ever checked for credentials.
+  # The scanner's own file is skipped here as it is in the tree scan above: its self-test plants a LAN
+  # address on purpose, and that line has been in history since the scanner was written.
+  hist=$(git log -p --all --no-color -- . ':(exclude)scripts/secret-scan.sh' | grep -E '^\+' | grep -v '^+++' | scan_both)
   [ -n "$hist" ] && { echo "IN GIT HISTORY:"; printf '%s\n' "$hist" | head -20; fail=1; }
 fi
 
