@@ -83,9 +83,17 @@ def base_dir(ctx: Ctx) -> Path:
     return ctx.project if ctx.scope == "project" and ctx.project else ctx.home
 
 
+def skill_dirs(ctx: Ctx) -> List[Path]:
+    """content/skills/*, with a profile's own skills/<name> taking the place of the harness's skill of that name
+    (an owner's fuller version, longer than the public 60-line cap) and adding any it has beside them."""
+    own = {d.name: d for d in list_dirs(ctx.harness_home / "profile" / "skills")}
+    out = [own.pop(d.name, d) for d in list_dirs(ctx.content / "skills")]
+    return out + sorted(own.values(), key=lambda d: d.name)
+
+
 def shared_skills(ctx: Ctx) -> List[FileChange]:
-    """content/skills/* -> ~/.agents/skills/<name> (read by Codex, Gemini CLI, Cursor, Copilot).
-    Several adapters may plan the same copy; the installer applies and backs up each path once."""
+    """content/skills/* (or the profile's own of that name) -> ~/.agents/skills/<name> (read by Codex, Gemini CLI,
+    Cursor, Copilot). Several adapters may plan the same copy; the installer applies and backs up each path once."""
     dest = base_dir(ctx) / ".agents" / "skills"
     return [FileChange(dest / d.name, "copy-dir", d, f"skill {d.name} (shared .agents/skills)")
-            for d in list_dirs(ctx.content / "skills")]
+            for d in skill_dirs(ctx)]

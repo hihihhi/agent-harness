@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List
 
 from .. import routing
-from .base import Adapter, Ctx, FileChange, base_dir, list_dirs, list_md, mcp_servers, shared_skills, which
+from .base import Adapter, Ctx, FileChange, base_dir, list_md, mcp_servers, shared_skills, skill_dirs, which
 
 
 def hpath(ctx: Ctx, *parts: str) -> str:
@@ -115,6 +115,13 @@ class ClaudeCodeAdapter(Adapter):
             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": prompt_command(ctx), "timeout": 5}]}],
             "PreCompact": [{"hooks": [{"type": "command", "command": "echo " + shlex.quote(PRECOMPACT_LINE)}]}],
         }}
+        if str(ctx.profile.get("auto_update", "")).lower() in ("true", "1", "yes"):
+            # The profile asks this machine to keep itself current: at most once a day (self-update's own
+            # limit), in the background, so no session waits on the network. One install serves every tool, so
+            # Claude Code's session start updates Codex's harness too.
+            settings["hooks"]["SessionStart"].append(
+                {"matcher": "startup", "hooks": [{"type": "command", "command":
+                 "(" + hpath(ctx, "bin", "harness") + " self-update >/dev/null 2>&1 &) ; true"}]})
         # Pre-approve our own server only (permissions docs: `mcp__<server>` matches all its tools).
         # Warm-up plugins (fetch, playwright) are NOT pre-approved.
         settings["permissions"] = {"allow": ["mcp__harness"]}
@@ -138,7 +145,7 @@ class ClaudeCodeAdapter(Adapter):
                        {"mcpServers": servers}, "registers the harness MCP server (" + ", ".join(servers) + ")"),
         ]
         changes += shared_skills(ctx)
-        for d in list_dirs(ctx.content / "skills"):
+        for d in skill_dirs(ctx):
             changes.append(FileChange(claude / "skills" / d.name, "symlink", root / ".agents" / "skills" / d.name,
                                       f"skill {d.name} (link to .agents/skills)"))
         for f in list_md(ctx.content / "prompts"):

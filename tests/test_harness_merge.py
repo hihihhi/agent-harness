@@ -74,6 +74,35 @@ class TestPortable(Base):
         self.assertEqual(p.returncode, 0, p.stderr)
 
 
+class TestAutoUpdate(Base):
+    def test_self_update_hook_only_when_the_profile_asks(self):
+        prof = self.tmp / "p"
+        prof.mkdir()
+        (prof / "profile.toml").write_text('name = "p"\nauto_update = true\n')
+        self.assertEqual(run(self.home, "install", "--yes", "--tools", "claude-code", "--profile", str(prof))[0], 0)
+        cmds = [h["command"] for g in json.loads((self.home / ".claude" / "settings.json").read_text())["hooks"]
+                ["SessionStart"] for h in g["hooks"]]
+        hook = [c for c in cmds if "self-update" in c]
+        self.assertEqual(len(hook), 1, cmds)
+        self.assertIn("&", hook[0], "the update must not make a session wait")
+        self.assertNotIn(str(self.home), hook[0])
+
+    def test_no_self_update_hook_by_default(self):
+        self.assertEqual(run(self.home, "install", "--yes", "--tools", "claude-code")[0], 0)
+        self.assertNotIn("self-update", (self.home / ".claude" / "settings.json").read_text())
+
+
+class TestProfileSkills(Base):
+    def test_a_profile_skill_takes_the_place_of_the_harness_skill_of_that_name(self):
+        prof = self.tmp / "p"
+        (prof / "skills" / "standards").mkdir(parents=True)
+        (prof / "profile.toml").write_text('name = "p"\n')
+        (prof / "skills" / "standards" / "SKILL.md").write_text("---\nname: standards\ndescription: mine\n---\nOWNER\n")
+        self.assertEqual(run(self.home, "install", "--yes", "--tools", "claude-code", "--profile", str(prof))[0], 0)
+        self.assertIn("OWNER", (self.home / ".claude" / "skills" / "standards" / "SKILL.md").read_text())
+        self.assertTrue((self.home / ".claude" / "skills" / "work-loop" / "SKILL.md").is_file(), "others kept")
+
+
 class TestGlob(Base):
     """2: kb_paths take a glob, so a profile names a folder whose exact name differs per account."""
 
