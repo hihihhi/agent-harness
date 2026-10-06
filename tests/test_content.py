@@ -78,7 +78,7 @@ class TestRules(unittest.TestCase):
 
 class TestSkills(unittest.TestCase):
     EXPECTED = {"debug-systematically", "verify-before-done", "data-job-trial-run",
-                "write-tests-first", "work-loop", "standards"}
+                "write-tests-first", "work-loop", "standards", "production-code", "optimise-by-measurement"}
 
     def test_rules_tell_the_agent_to_orient_before_starting(self):
         """A user who knows nothing about the machine must not have to brief the agent: the rules send it to

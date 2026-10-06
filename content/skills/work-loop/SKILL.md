@@ -1,6 +1,6 @@
 ---
 name: work-loop
-description: The default loop for research, analysis, coding and dev-ops tasks - hypothesis/analysis, research, summarise and plan, execute/experiment, test and evaluate, then loop back to whichever stage the evidence points to. Use for any task bigger than a one-line change.
+description: Default loop for research, coding and dev-ops - analyse, research, plan, execute, test, loop back where the evidence points. Use for any task beyond a one-line change.
 ---
 
 # The work loop

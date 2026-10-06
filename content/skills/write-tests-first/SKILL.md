@@ -1,6 +1,6 @@
 ---
 name: write-tests-first
-description: Write a failing test before implementing a feature or fixing a bug, then make it pass. Use when adding behaviour, fixing a reported bug, or changing logic that has no test yet.
+description: Write a failing test first, make it pass, then prove the tests catch breakage. Use when adding behaviour, fixing a bug, or changing untested logic.
 ---
 
 # Write tests first
@@ -20,6 +20,22 @@ A test written first proves two things: the behaviour was missing, and your chan
 6. **Add the edge cases** that matter: empty, missing, very large, wrong type, the error path.
    One assertion of intent per test.
 7. **Refactor** only while everything is green, and rerun afterwards.
+
+## Prove the tests are strong enough
+
+A handful of happy-path cases is not a test suite. For each behaviour you changed:
+- **Every sentence of the request becomes a test** ("input without an offset is UTC" -> a test with an
+  offset-free input). Then each input class (empty, one, many, duplicates, touching boundaries, wrong type,
+  unicode), each error path, the exact output ordering.
+- **Test what must not happen too:** errors that must propagate (`KeyboardInterrupt` past an
+  `except Exception`), what must not be retried, files that must not be deleted, secrets not in logs.
+- **Assert facts, not wording:** a log line or message must carry the id, path or line number: check those
+  with `in` or a regex, never the whole sentence, or the test breaks on a harmless rewording.
+- **Many inputs, one invariant:** for arithmetic or data rules, loop over ranges or use a property test
+  and assert what must always hold (sums, ordering, round trips), not a few hand-picked values.
+- **Break it on purpose:** change one thing in the code (flip a comparison, drop a branch, return early,
+  change a constant, delete the log call), run the tests, and see red. A mutation nothing catches is a
+  missing test: add it, then restore the code.
 
 ## Good tests
 

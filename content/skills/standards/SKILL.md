@@ -1,6 +1,6 @@
 ---
 name: standards
-description: Quality bar for tests, evals, gates and review - four test tiers, what makes a gate real, tests that cannot fail. Load before writing a test or eval, or reviewing a diff.
+description: Quality bar for tests, evals, gates and review - test tiers, real gates, tests that cannot fail. Load before writing a test or eval, or reviewing a diff.
 ---
 
 # Standards

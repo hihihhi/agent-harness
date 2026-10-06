@@ -1,6 +1,6 @@
 ---
 name: data-job-trial-run
-description: Run data processing, training, migrations or other long or expensive jobs safely by trying them small first. Use before any job that reads or writes many files or rows, runs for more than a few minutes, or costs money or shared resources.
+description: Run long or costly data jobs, training or migrations small first, then a sample, then in full. Use before jobs touching many files or rows, or running for minutes.
 ---
 
 # Data job trial run

@@ -1,6 +1,6 @@
 ---
 name: debug-systematically
-description: Find the root cause of a bug, failing test, crash or wrong output before changing code. Use when something is broken, throws, fails intermittently or behaves unexpectedly, and the cause is not already obvious.
+description: Find a bug's root cause before changing code. Use when something fails, throws or misbehaves and the cause is not obvious.
 ---
 
 # Debug systematically

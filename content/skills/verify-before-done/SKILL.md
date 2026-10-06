@@ -1,6 +1,6 @@
 ---
 name: verify-before-done
-description: Check work with real evidence before saying it is done, fixed or working. Use before any completion claim, before handing work back, and before a commit or pull request.
+description: Show real evidence before saying done, fixed or working. Use before any completion claim, hand-back, commit or pull request.
 ---
 
 # Verify before done
