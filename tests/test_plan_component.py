@@ -181,3 +181,23 @@ def test_the_mcp_tool_will_not_start_the_orchestrator():
         out = json.dumps(_call_plan_tool(tmp, "run g"))
         assert "terminal" in out.lower()
         assert _mark(tmp, 1) == " "
+
+
+def test_a_worker_gets_its_tier_model_and_effort_from_the_agent_file(tmp_path):
+    """`plan run` passes --model/--effort read from harness-<tier>.md as well as --agent, so the routing
+    holds even where a session agent's frontmatter effort is not applied; an unknown effort is dropped."""
+    import importlib.util
+    from agent_harness import routing
+    spec = importlib.util.spec_from_file_location("wg_plan", PLAN + ".py" if os.path.exists(PLAN + ".py")
+                                                  else os.path.join(WG, "plan.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    agents = tmp_path / ".claude" / "agents"
+    agents.mkdir(parents=True)
+    tier = {"when": "w", "brief": "b", "claude": {"model": "haiku", "effort": "low", "why": "x"}}
+    (agents / "harness-quick.md").write_text(routing.claude_agent("quick", tier))
+    assert mod.claude_tier("quick", home=str(tmp_path)) == ("haiku", "low")
+    tier["claude"]["effort"] = "minimal"
+    (agents / "harness-quick.md").write_text(routing.claude_agent("quick", tier))
+    assert mod.claude_tier("quick", home=str(tmp_path)) == ("haiku", None)
+    assert mod.claude_tier("absent", home=str(tmp_path)) == (None, None)

@@ -153,6 +153,9 @@ The rules ask for good behaviour; the harness enforces a floor where the tool al
   turns it off). Claude desktop and Jupyter AI, which have no shell of their own, never get it or `run_checks`:
   their server runs with `--no-shell`. Its definition costs ~340 bytes per request, inside the context budget. The engine's protections
   (gates judged by the guard, tamper detection, irreversible nodes held) do not depend on the switch.
+  `plan run` gives each worker a tier from `content/routing.toml`: a node's own `tier:`, else `standard`, and
+  `deep` once its gate has failed. The tier's model and effort are passed explicitly (`--model`/`--effort`
+  for Claude Code, `-m`/`model_reasoning_effort` for Codex), read from the `harness-<tier>` agent files.
 - **Memory recall** (Claude Code): relevant memories are attached to each prompt, within a strict
   time limit, so the agent does not need to search for them.
 

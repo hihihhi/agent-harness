@@ -1968,6 +1968,25 @@ def runner():
     return "claude" if shutil.which("claude") or not shutil.which("codex") else "codex"
 
 
+def claude_tier(tier, home=None):
+    """(model, effort) from ~/.claude/agents/harness-<tier>.md, or (None, None) when the harness wrote none.
+    Passed as --model/--effort as well as --agent, so the tier holds even where a session agent's own
+    frontmatter effort is not applied."""
+    p = os.path.join(home or os.path.expanduser("~"), ".claude", "agents", f"harness-{tier}.md")
+    out = {}
+    try:
+        for line in open(p, encoding="utf-8"):
+            if line.strip() == "---" and out:
+                break
+            m = re.match(r'^(model|effort):\s*(\S+)\s*$', line)
+            if m:
+                out[m.group(1)] = m.group(2)
+    except OSError:
+        pass
+    effort = out.get("effort")
+    return out.get("model"), (effort if effort in ("low", "medium", "high", "xhigh", "max") else None)
+
+
 def codex_tier(tier, home=None):
     """(model, effort) from ~/.codex/agents/harness-<tier>.toml, or (None, None) when the harness wrote none."""
     p = os.path.join(home or os.path.expanduser("~"), ".codex", "agents", f"harness-{tier}.toml")
@@ -2033,7 +2052,9 @@ def _dispatch(slug, nid, timeout, model=None):
     if model:
         cmd += ["--model", model]
     elif os.path.exists(os.path.expanduser(f"~/.claude/agents/harness-{tier}.md")):
-        cmd += ["--agent", f"harness-{tier}"]      # its model + effort, from agent-harness routing.toml
+        cmd += ["--agent", f"harness-{tier}"]      # its brief, model + effort, from agent-harness routing.toml
+        t_model, t_effort = claude_tier(tier)
+        cmd += (["--model", t_model] if t_model else []) + (["--effort", t_effort] if t_effort else [])
     t0 = time.time()
     proc = None
     try:
