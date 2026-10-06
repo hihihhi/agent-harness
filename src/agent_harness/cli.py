@@ -586,6 +586,18 @@ def stop_hook(stdin=None) -> int:
     return 0
 
 
+def capture_hook(stdin=None) -> int:
+    """A Stop hook that only records candidate lessons: for a setup that keeps its own rules and hooks and wants
+    nothing else from the harness at turn end (no check reminder, never blocks). Always exits 0, prints nothing."""
+    try:
+        data = json.loads((stdin or sys.stdin).read() or "{}")
+        from . import capture
+        capture.capture_turn(I.harness_home(Path.home()), data["transcript_path"], str(data.get("session_id")))
+    except Exception:
+        pass
+    return 0
+
+
 RECALL_TIMEOUT = 2.0
 
 
@@ -725,6 +737,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--gate", metavar="FILE", help="exit 0 only if FILE is a valid review with no must-fix")
     sub.add_parser("_hook-stop")
     sub.add_parser("_hook-prompt")
+    sub.add_parser("_hook-capture")
     return ap
 
 
@@ -738,6 +751,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return stop_hook()
     if args.cmd == "_hook-prompt":
         return prompt_hook()
+    if args.cmd == "_hook-capture":
+        return capture_hook()
     if fn is None:
         build_parser().print_help()
         return 1

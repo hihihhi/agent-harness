@@ -755,5 +755,20 @@ class TestReReview(Base):
         self.assertEqual(D.vet(dict(CATALOG[0], install=["/tmp/evil/claude", "plugin", "install", "x"]))[0], "block")
 
 
+class TestCaptureOnlyHook(Base):
+    def test_it_records_and_never_blocks_or_prints(self):
+        t = self.tmp / "t.jsonl"
+        transcript(t, TestReReview.turn(self))
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            rc = cli.capture_hook(io.StringIO(json.dumps({"transcript_path": str(t), "session_id": "s"})))
+        self.assertEqual((rc, buf.getvalue()), (0, ""))
+        self.assertEqual(len((self.hh() / "candidates.jsonl").read_text().splitlines()), 1)
+
+    def test_a_broken_payload_is_still_exit_0(self):
+        with mock.patch("sys.stdout", io.StringIO()):
+            self.assertEqual(cli.capture_hook(io.StringIO("not json")), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
