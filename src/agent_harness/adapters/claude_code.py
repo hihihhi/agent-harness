@@ -10,17 +10,32 @@ from .. import routing
 from .base import Adapter, Ctx, FileChange, base_dir, list_dirs, list_md, mcp_servers, shared_skills, which
 
 
+def hpath(ctx: Ctx, *parts: str) -> str:
+    """A harness path for a hook COMMAND (Claude Code runs hooks with `sh -c`): written as "$HOME"/... when the
+    harness lives under the home it is installed for, so the same settings.json works for any account and
+    machine it is synced to; an absolute path only when the harness lives elsewhere. No username is written."""
+    p = ctx.harness_home.joinpath(*parts)
+    if ctx.harness_home == ctx.home / ".agent-harness":
+        # The default place, written so HARNESS_HOME still wins as it does everywhere else in the harness
+        # (the eval's sandbox points it there while Claude Code runs with the real HOME).
+        return '"${HARNESS_HOME:-$HOME/.agent-harness}"/' + shlex.quote("/".join(parts))
+    try:
+        rel = p.relative_to(ctx.home)
+    except ValueError:
+        return shlex.quote(str(p))
+    return '"$HOME"/' + shlex.quote(str(rel))
+
+
 def guard_command(ctx: Ctx) -> str:
-    return "python3 " + shlex.quote(str(ctx.harness_home / "content" / "hooks" / "guard.py"))
+    return "python3 " + hpath(ctx, "content", "hooks", "guard.py")
 
 
 def check_guard_command(ctx: Ctx) -> str:
-    return "python3 " + shlex.quote(str(ctx.harness_home / "content" / "hooks" / "check_guard.py"))
+    return "python3 " + hpath(ctx, "content", "hooks", "check_guard.py")
 
 
 def _lib_cmd(ctx: Ctx, module_args: str) -> str:
-    lib = shlex.quote(str(ctx.harness_home / "lib"))
-    return f"PYTHONPATH={lib} python3 -m {module_args}"
+    return f"PYTHONPATH={hpath(ctx, 'lib')} python3 -m {module_args}"
 
 
 def stop_command(ctx: Ctx) -> str:
@@ -103,7 +118,10 @@ class ClaudeCodeAdapter(Adapter):
         # Pre-approve our own server only (permissions docs: `mcp__<server>` matches all its tools).
         # Warm-up plugins (fetch, playwright) are NOT pre-approved.
         settings["permissions"] = {"allow": ["mcp__harness"]}
-        if not project:  # user-level only; one memory dir the harness keeps with its own
+        # user-level only; one memory dir the harness keeps with its own. A profile can keep Claude Code's own
+        # memory folder instead (claude_memory = "keep"): an owner's existing memories stay where they are and
+        # are searched through kb_paths, and no absolute path is written into a settings.json shared by accounts.
+        if not project and str(ctx.profile.get("claude_memory", "")) != "keep":
             settings["autoMemoryDirectory"] = str(ctx.harness_home / "memory" / "claude-code")
         servers = {n: {"type": "stdio", "command": c[0], "args": c[1:], "env": {}}
                    for n, c in mcp_servers(ctx).items()}

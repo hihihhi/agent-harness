@@ -52,7 +52,9 @@ class ClaudeCode(Ctxd):
         self.assertEqual(s["hooks"]["PreToolUse"][0]["matcher"], "Bash")
         self.assertEqual(s["hooks"]["PreToolUse"][1]["matcher"], "Edit|Write|MultiEdit")
         self.assertIn("check_guard.py", s["hooks"]["PreToolUse"][1]["hooks"][0]["command"])
-        self.assertIn(str(self.hh / "content" / "hooks" / "guard.py"), s["hooks"]["PreToolUse"][0]["hooks"][0]["command"])
+        # $HOME-relative: the same settings.json works for any account it is synced to (no username written)
+        self.assertEqual('python3 "${HARNESS_HOME:-$HOME/.agent-harness}"/content/hooks/guard.py',
+                         s["hooks"]["PreToolUse"][0]["hooks"][0]["command"])
         self.assertIn("_hook-stop", s["hooks"]["Stop"][0]["hooks"][0]["command"])
         self.assertIn("_hook-prompt", s["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"])
         self.assertIn("memory digest", s["hooks"]["SessionStart"][0]["hooks"][0]["command"])

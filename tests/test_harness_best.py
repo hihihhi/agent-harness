@@ -518,9 +518,10 @@ class TestTrend(Base):
                 {"version": "0.4.0", "tool": "codex", "pass": 16, "n": 18, "tokens": 1000}]
         self.assertEqual(self.check(rows), 0)
 
-    def test_a_one_question_dip_is_noise_but_two_are_not(self):
+    def test_any_dip_is_refused_under_the_strict_rule(self):
         r = lambda v, p: {"version": v, "tool": "claude-code", "pass": p, "n": 18, "tokens": 1000}  # noqa: E731
-        self.assertEqual(self.check([r("0.3", 17), r("0.4", 16)]), 0, "one question of 18 is within noise")
+        # strict (the owner's decision, 2026-10-07): any lower score is refused; noise is met with repeated runs
+        self.assertNotEqual(self.check([r("0.3", 17), r("0.4", 16)]), 0, "strict: one question lower is refused")
         self.assertNotEqual(self.check([r("0.3", 17), r("0.4", 15)]), 0, "two questions of 18 is a regression")
         self.assertNotEqual(self.check([r("0.3", 16), r("0.4", 14)]), 0)
         self.assertNotEqual(self.check([r("0.3", 18), r("0.4", 15)]), 0)
@@ -528,7 +529,7 @@ class TestTrend(Base):
     def test_one_question_drops_cannot_add_up(self):
         rows = [{"version": "v%d" % k, "tool": "claude-code", "pass": 17 - k, "n": 18, "tokens": 1000} for k in range(9)]
         caught = [rows[k]["version"] for k in range(1, 9) if self.check(rows[:k + 1]) != 0]
-        self.assertEqual(caught[:1], ["v2"], "a steady decline must be refused at its second step")
+        self.assertEqual(caught[:1], ["v1"], "strict: a steady decline is refused at its first step")
 
     def test_a_different_question_count_is_not_comparable(self):
         r = [{"version": "a", "tool": "codex", "pass": 17, "n": 18, "tokens": 1000},

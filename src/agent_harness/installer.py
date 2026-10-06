@@ -774,13 +774,8 @@ def build_rules(content: Path, profile: dict, profile_dir: Optional[Path], hh: P
 
 def kb_paths(profile: dict, profile_dir: Optional[Path]) -> List[Path]:
     """The profile's kb_paths, ~ expanded, relative ones resolved against the profile dir."""
-    out = []
-    for v in profile.get("kb_paths") or []:
-        p = Path(os.path.expanduser(str(v)))
-        if not p.is_absolute() and profile_dir:
-            p = Path(profile_dir) / p
-        out.append(p)
-    return out
+    from .mcp.kb import expand_kb_paths   # one rule for the install-time index and search
+    return expand_kb_paths(profile.get("kb_paths") or [], profile_dir)
 
 
 # ---------------------------------------------------------------- copying the harness itself
@@ -800,6 +795,22 @@ def copy_harness(hh: Path, source: Path, profile_dir: Optional[Path]) -> None:
     if profile_dir and Path(profile_dir).resolve() != (hh / "profile").resolve():
         _remove_any(hh / "profile")
         shutil.copytree(Path(profile_dir), hh / "profile", ignore=IGNORE)
+    write_launcher(hh)
+
+
+LAUNCHER = """#!/bin/sh
+# agent-harness launcher: runs the INSTALLED harness (the copy self-update keeps current), found relative to
+# this file, so it works for any account and machine with no path written into it.
+here=$(cd "$(dirname "$0")/.." && pwd)
+PYTHONPATH="$here/lib${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m agent_harness.cli "$@"
+"""
+
+
+def write_launcher(hh: Path) -> None:
+    f = hh / "bin" / "harness"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(LAUNCHER, encoding="utf-8")
+    f.chmod(0o755)
 
 
 def extra_rules_text(profile: dict, profile_dir: Optional[Path]) -> str:

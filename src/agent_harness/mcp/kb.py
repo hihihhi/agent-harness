@@ -312,10 +312,23 @@ def _profile_kb_paths(hh: Path) -> List[Path]:
         raw = re.findall(r"[\"']([^\"']+)[\"']", m.group(1)) if m else []
     except Exception:
         return []
+    return expand_kb_paths(raw, pdir)
+
+
+def expand_kb_paths(raw, base: Optional[Path]) -> List[Path]:
+    """kb_paths as written in a profile: ~ expanded, relative ones against the profile folder, and a glob
+    (`~/.claude/projects/*/memory`) expanded to every match, so a profile shared by accounts and machines names
+    a folder whose exact name differs on each (no username written)."""
+    import glob as _glob
     out = []
     for v in raw:
-        p = Path(os.path.expanduser(v))
-        out.append(p if p.is_absolute() else pdir / p)
+        s = os.path.expanduser(str(v))
+        if not os.path.isabs(s) and base:
+            s = str(Path(base) / s)
+        if any(c in s for c in "*?["):
+            out += [Path(m) for m in sorted(_glob.glob(s))]
+        else:
+            out.append(Path(s))
     return out
 
 

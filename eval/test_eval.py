@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -163,7 +164,12 @@ class Runs(unittest.TestCase):
                 self.assertEqual(server["env"]["HOME"], str(sbx))
                 self.assertTrue(server["args"][0].startswith(str(sbx)))
                 settings = json.loads((sbx / ".claude" / "settings.json").read_text())
-                self.assertIn(str(sbx), settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"])
+                # the hook names no home; it resolves through HARNESS_HOME, which the sandbox points at itself
+                cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+                self.assertIn("${HARNESS_HOME:-", cmd)
+                out = subprocess.run(["sh", "-c", "echo " + cmd.split(" ", 1)[1]], capture_output=True, text=True,
+                                     env=dict(os.environ, HARNESS_HOME=str(sbx / ".agent-harness"))).stdout
+                self.assertTrue(out.strip().startswith(str(sbx)), out)
                 self.assertTrue((sbx / ".claude" / "CLAUDE.md").is_file())
 
     def test_the_mirror_follows_the_real_transcripts_both_ways(self):

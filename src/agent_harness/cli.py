@@ -621,6 +621,14 @@ def prompt_hook(stdin=None) -> int:
     return 0
 
 
+def cmd_self_update(args) -> int:
+    from . import selfupdate
+    home, hh = _paths(args)
+    rc, msg = selfupdate.run(hh, home, check_only=args.check, now=args.now)
+    _out(msg)
+    return rc
+
+
 def cmd_improve(args) -> int:
     from . import improve
     _, hh = _paths(args)
@@ -742,6 +750,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ssh-cmd", help="ssh command to use (default: ssh)")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--config", action="store_true", help="save --remote/--ssh-cmd as the default")
+    p = sub.add_parser("self-update", help="update to the newest release whose checks passed (at most daily)")
+    p.add_argument("--check", action="store_true", help="say what it would do, change nothing")
+    p.add_argument("--now", action="store_true", help="ignore the once-a-day limit")
     p = sub.add_parser("improve", help="turn repeated lessons into proposals; apply one only behind an eval gain")
     p.add_argument("--propose", action="store_true")
     p.add_argument("--apply", metavar="ID")
@@ -777,7 +788,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     fn = {"install": cmd_install, "uninstall": cmd_uninstall, "status": cmd_status, "doctor": cmd_doctor,
           "warmup": cmd_warmup, "update": cmd_update, "learn": cmd_learn, "sync": cmd_sync,
           "review": cmd_review, "run": cmd_run, "discover": cmd_discover,
-          "improve": cmd_improve}.get(args.cmd)
+          "improve": cmd_improve, "self-update": cmd_self_update}.get(args.cmd)
     if args.cmd == "_hook-stop":
         return stop_hook()
     if args.cmd == "_hook-prompt":

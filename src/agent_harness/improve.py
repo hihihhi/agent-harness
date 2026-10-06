@@ -109,8 +109,8 @@ def apply(hh: Path, pid: str, eval_path: str = None) -> Tuple[int, str]:
     return 0, "improve: %s applied as a lesson (%s)" % (pid, why)
 
 
-BAND_QUESTIONS = 1   # how many questions below the reference still count as "no worse": the measured single-run
-#                      noise (one question of 18 passed 3 of 4 runs on one build). Owner's policy; see docs.
+BAND_QUESTIONS = 0   # strict: no fewer questions than the best accepted release (the owner's choice, 2026-10-07);
+#                      single-run noise is answered by repeated runs, not by a band. See docs/design-decisions.md.
 
 
 def _cost(r) -> float:
