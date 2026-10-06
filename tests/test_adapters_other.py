@@ -267,7 +267,7 @@ class TestClaudeDesktop(Base):
         c = ch[d / "claude_desktop_config.json"]
         self.assertEqual(c.content, {"mcpServers": {"fs": {"command": "npx"},
                                                     "harness": {"command": "python3",
-                                                                "args": self.cmd[1:]}}})
+                                                                "args": self.cmd[1:] + ["--no-shell"]}}})
         self.assertTrue(any("no global instructions" in n for n in notes))
 
     def test_windows_path(self):
@@ -292,7 +292,7 @@ class TestJupyterAI(Base):
         c = self.by_path(a.plan(self.ctx()))[j / "mcp_settings.json"]
         self.assertEqual(c.content, {"mcp_servers": [
             {"name": "fs", "command": "npx"},
-            {"name": "harness", "command": "python3", "args": self.cmd[1:]}]})
+            {"name": "harness", "command": "python3", "args": self.cmd[1:] + ["--no-shell"]}]})
 
     def test_project_and_detect(self):
         a = JupyterAIAdapter()

@@ -19,6 +19,9 @@
   features go through the adapters.
 - **Measured, and not adopted.** Four candidates failed the keep rule and ship off by default
   ([results.md](results.md#the-ab-eval-historical-private-corpus)).
+- **One named exception.** The work graph (`plan`) ships on by the owner's decision (2026-10-06), not by an
+  eval: it keeps a task's goals and per-step checks on disk, out of reach of a lost context window. Its
+  definition is counted in the token budget ([test_context_budget.py](../tests/test_context_budget.py)).
 
 ## The keep rule
 

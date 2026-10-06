@@ -1,2 +1,2 @@
 """agent-harness: one install gives every AI coding tool the same context, memory and checks."""
-__version__ = "0.3.3"
+__version__ = "0.3.4"

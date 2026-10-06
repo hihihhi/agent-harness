@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import sys
 import time
 import traceback
@@ -355,7 +356,20 @@ def _err(mid, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}}
 
 
+SHELL_TOOLS = ("plan", "run_checks")   # both run commands on the machine
+
+
+def apply_flags(argv) -> None:
+    """--no-shell: the tool this server serves has no shell of its own (Claude desktop, Jupyter AI), so the
+    tools that run commands are never offered to it, whatever HARNESS_ENABLE says. Handing a chat app a way
+    to run gate commands would be a capability it did not have before the harness was installed."""
+    if "--no-shell" in argv:
+        have = [x for x in os.environ.get("HARNESS_DISABLE", "").split(",") if x.strip()]
+        os.environ["HARNESS_DISABLE"] = ",".join(have + [t for t in SHELL_TOOLS if t not in have])
+
+
 def main() -> None:
+    apply_flags(sys.argv[1:])
     try:
         sys.stdin.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
         sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]

@@ -36,7 +36,7 @@ class JupyterAIAdapter(Adapter):
 
     def _changes(self, ctx: Ctx):
         refused: List[str] = []
-        ours = [{"name": n, "command": c[0], "args": list(c[1:])} for n, c in mcp_servers(ctx).items()]
+        ours = [{"name": n, "command": c[0], "args": list(c[1:])} for n, c in mcp_servers(ctx, shell=False).items()]
         root = ctx.project if ctx.scope == "project" and ctx.project is not None else ctx.home
         fc = json_change(root / ".jupyter" / "mcp_settings.json",
                          lambda ex: {"mcp_servers": _servers(ex, ours)},

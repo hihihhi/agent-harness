@@ -150,7 +150,8 @@ The rules ask for good behaviour; the harness enforces a floor where the tool al
   graph of gated nodes merged in from agentic-os (181 of 203 real nodes gated there, and adversarially
   certified). Its evidence is use and an attack, not a gain measured against plain; the owner turned it on by
   default in v0.3.3 because it is how the goal and each step's check survive context loss (`HARNESS_DISABLE=plan`
-  turns it off). Its definition costs ~340 bytes per request, inside the context budget. The engine's protections
+  turns it off). Claude desktop and Jupyter AI, which have no shell of their own, never get it or `run_checks`:
+  their server runs with `--no-shell`. Its definition costs ~340 bytes per request, inside the context budget. The engine's protections
   (gates judged by the guard, tamper detection, irreversible nodes held) do not depend on the switch.
 - **Memory recall** (Claude Code): relevant memories are attached to each prompt, within a strict
   time limit, so the agent does not need to search for them.

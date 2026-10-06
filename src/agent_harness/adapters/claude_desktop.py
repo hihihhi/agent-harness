@@ -41,7 +41,7 @@ class ClaudeDesktopAdapter(Adapter):
         d = config_dir(ctx)
         if d is None:
             return [], refused
-        ours = {n: stdio_entry(c, with_type=False) for n, c in mcp_servers(ctx).items()}
+        ours = {n: stdio_entry(c, with_type=False) for n, c in mcp_servers(ctx, shell=False).items()}
         fc = json_change(d / FILE, lambda ex: {"mcpServers": merged_map(ex, "mcpServers", ours)},
                          "Claude desktop MCP: mcpServers.harness (restart the app)", refused)
         return ([fc] if fc else []), refused

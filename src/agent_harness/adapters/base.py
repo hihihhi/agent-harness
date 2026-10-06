@@ -57,9 +57,10 @@ def which(cmd: str) -> bool:
     return shutil.which(cmd) is not None
 
 
-def mcp_servers(ctx: Ctx) -> dict:
-    """{name: [cmd, *args]} for our server plus any warm-up plugins."""
-    servers = {"harness": list(ctx.mcp_cmd)}
+def mcp_servers(ctx: Ctx, shell: bool = True) -> dict:
+    """{name: [cmd, *args]} for our server plus any warm-up plugins. shell=False is for a tool with no shell of
+    its own: the server then withholds the tools that run commands (mcp/server.py, apply_flags)."""
+    servers = {"harness": list(ctx.mcp_cmd) + ([] if shell else ["--no-shell"])}
     for name, cmd in (ctx.extra_mcp or {}).items():
         servers[name] = list(cmd)
     return servers

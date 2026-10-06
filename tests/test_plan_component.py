@@ -140,6 +140,32 @@ def test_one_mcp_tool_exposes_the_graph_and_it_is_on_by_default(monkeypatch):
     assert "plan" not in [t["name"] for t in server.tool_list()]
 
 
+def test_a_tool_without_its_own_shell_never_gets_the_graph(monkeypatch):
+    """`plan` runs gate commands. In Claude Code or Codex the agent already has a shell; in Claude desktop
+    or Jupyter AI it does not, and enabling the graph there would quietly hand it one."""
+    from agent_harness.mcp import server
+    monkeypatch.delenv("HARNESS_DISABLE", raising=False)
+    monkeypatch.setenv("HARNESS_ENABLE", "plan,run_checks")
+    server.apply_flags(["--no-shell"])
+    names = [t["name"] for t in server.tool_list()]
+    assert "plan" not in names and "run_checks" not in names
+
+
+@pytest.mark.parametrize("adapter,shell", [("claude_desktop", False), ("jupyter_ai", False),
+                                           ("claude_code", True), ("codex", True), ("cursor", True)])
+def test_adapters_register_the_server_with_or_without_a_shell(adapter, shell):
+    import importlib
+    from pathlib import Path
+    from agent_harness.adapters import base
+    mod = importlib.import_module("agent_harness.adapters." + adapter)
+    ctx = type("C", (), {"mcp_cmd": ["python3", "/h/lib/agent_harness/mcp/server.py"], "extra_mcp": {}})()
+    src = Path(mod.__file__).read_text(encoding="utf-8")
+    uses_no_shell = "shell=False" in src
+    assert uses_no_shell == (not shell), "%s: shell=%s but the adapter says otherwise" % (adapter, shell)
+    assert base.mcp_servers(ctx, shell=False)["harness"][-1] == "--no-shell"
+    assert "--no-shell" not in base.mcp_servers(ctx)["harness"]
+
+
 def test_the_mcp_tool_runs_a_command_in_the_project():
     with tempfile.TemporaryDirectory() as tmp:
         _graph(tmp, "- [ ] 1. a | gate: true\n")
