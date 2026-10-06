@@ -5,6 +5,7 @@ missing tool FAILS its dimension and says why in `details`; nothing is skipped o
 """
 import fnmatch
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -16,9 +17,13 @@ RUFF = [sys.executable, "-m", "ruff"]
 LINT_RULES = "E9,F,B,E722,BLE001"
 TIMEOUT = 180
 NOISE = ("__pycache__", ".pytest_cache", ".ruff_cache", ".git")
+PLAN_DIR = "plan/"                 # the harness plan tool's work state, by design in the repo
 
 
 def _run(cmd, cwd, timeout=TIMEOUT, env=None):
+    # No bytecode cache: a same-length mutant written within the same second as the reference would otherwise be
+    # served from the reference's stale .pyc and "survive" (found re-grading the v0.4.2 baseline: verdicts flipped).
+    env = dict(os.environ if env is None else env, PYTHONDONTWRITEBYTECODE="1")
     try:
         p = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout, env=env)
         return p.returncode, (p.stdout + p.stderr)
@@ -183,7 +188,8 @@ def g_leak(task, work):
 
 
 def g_scope(task, work):
-    out = [p for p in changed(work) if not any(fnmatch.fnmatch(p, g) for g in task["allowed"])]
+    out = [p for p in changed(work) if not p.startswith(PLAN_DIR)
+           and not any(fnmatch.fnmatch(p, g) for g in task["allowed"])]
     return not out, "outside the task: %s" % out if out else "in scope"
 
 
@@ -199,21 +205,34 @@ def g_docs(task, work):
 SKIPS = ("pytest.mark.skip", "pytest.skip(", "pytest.mark.xfail", "pytest.xfail(", "unittest.skip")
 
 
+def probe_catches(task, work, files):
+    """True when the given visible test files (as they are in `work`) FAIL on the task's broken probe."""
+    tmp, w = _copy(work)
+    try:
+        (w / task["impl"]).write_text(task["probe"], encoding="utf-8")
+        keep = {Path(f).as_posix() for f in files}
+        for p in list((w / "tests").rglob("test_*.py")):
+            if p.relative_to(w).as_posix() not in keep:
+                p.unlink()
+        rc, _ = _run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *sorted(keep)], w)
+        return rc != 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def g_integrity(task, work):
+    """Not weakened: every visible test file still exists, gained no skip or xfail, and still catches the broken
+    probe that its original version catches. Rewording or strengthening an assertion passes; neutering fails."""
     problems = []
     for f in task["tests"]:
         p = Path(work) / f
         if not p.is_file():
             problems.append("%s deleted" % f)
             continue
-        now = p.read_text(encoding="utf-8", errors="replace")
-        lines = {ln.strip() for ln in now.splitlines()}
-        orig = task["files"][f]
-        for ln in orig.splitlines():
-            s = ln.strip()
-            if (s.startswith("assert ") or "pytest.raises(" in s) and s not in lines:
-                problems.append("%s: removed %r" % (f, s))
+        now, orig = p.read_text(encoding="utf-8", errors="replace"), task["files"][f]
         problems += ["%s: %s added" % (f, k) for k in SKIPS if k in now and k not in orig]
+        if not probe_catches(task, work, [f]):
+            problems.append("%s no longer fails on a broken implementation (the original does)" % f)
     return not problems, problems or "visible tests intact"
 
 

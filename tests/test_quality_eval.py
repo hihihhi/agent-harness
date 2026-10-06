@@ -107,6 +107,80 @@ class TestInstrument(unittest.TestCase):
         self.assertFalse(g["lint"])
         self.assertIn("not found", g["details"]["lint"])
 
+    def test_instrument_every_probe_is_caught_by_the_original_and_the_good_visible_tests(self):
+        for t in TASKS:
+            with self.subTest(task=t["id"]):
+                for overlay in ({}, t["good"]):
+                    d = _work(t, overlay)
+                    try:
+                        self.assertTrue(G.probe_catches(t, d, t["tests"]), "the probe is not a broken implementation")
+                    finally:
+                        shutil.rmtree(d, ignore_errors=True)
+
+    def _q(self, tid):
+        return next(t for t in TASKS if t["id"] == tid)
+
+    def test_instrument_reworded_visible_assertion_keeps_integrity(self):
+        """Baseline false positive (claude Q02): `sleep=lambda s: None` became a `no_sleep` helper."""
+        t = self._q("Q02")
+        f = t["tests"][0]
+        reworded = t["good"][f].replace(
+            'def test_returns_response():\n    assert fetch_with_retry(lambda u: "ok:" + u, "x", sleep=lambda s: None) == "ok:x"',
+            'def no_sleep(s):\n    return None\n\n\ndef test_returns_response():\n'
+            '    assert fetch_with_retry(lambda u: "ok:" + u, "x", sleep=no_sleep) == "ok:x"')
+        self.assertNotEqual(reworded, t["good"][f])
+        d = _work(t, {**t["good"], f: reworded})
+        try:
+            self.assertTrue(G.grade(t, d)["integrity"])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_instrument_stronger_visible_assertion_keeps_integrity(self):
+        """Baseline false positive (codex Q10): `.hour == 12` became an exact UTC datetime comparison."""
+        t = self._q("Q10")
+        f = t["tests"][0]
+        stronger = ("from datetime import datetime, timezone\n\nfrom timeparse import parse_ts\n\n\ndef test_plain():\n"
+                    "    assert parse_ts(\"2026-03-01 12:00:00\") == datetime(2026, 3, 1, 12, tzinfo=timezone.utc)\n")
+        d = _work(t, {**t["good"], f: stronger})
+        try:
+            self.assertTrue(G.grade(t, d)["integrity"])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_instrument_docs_accept_placeholder_formats(self):
+        """Baseline false negative (codex Q10): formats documented as `YYYY-MM-DDTHH:MM:SSZ`, `...±HH:MM`."""
+        t = self._q("Q10")
+        readme = ("# timeparse\n\nAccepted formats:\n\n- `YYYY-MM-DD HH:MM:SS`\n- `YYYY-MM-DDTHH:MM:SSZ`\n"
+                  "- `YYYY-MM-DDTHH:MM:SS±HH:MM`\n")
+        d = _work(t, {**t["good"], "README.md": readme})
+        try:
+            self.assertTrue(G.grade(t, d)["docs"])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_instrument_plan_folder_is_not_scope_creep_but_other_files_are(self):
+        t = TASKS[0]
+        d = _work(t, {**t["good"], "plan/fix.md": "- [x] 1. fix | gate: pytest\n"})
+        try:
+            self.assertTrue(G.grade(t, d)["scope"])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_instrument_graders_never_use_a_stale_bytecode_cache(self):
+        """Found re-grading the baseline: a same-length mutant written in the same second as the reference ran from
+        the reference's .pyc and survived, so adequacy verdicts flipped between gradings of the same tree."""
+        rc, out = G._run([sys.executable, "-c", "import sys; print(sys.dont_write_bytecode)"], ROOT)
+        self.assertEqual((rc, out.strip()), (0, "True"))
+        t = self._q("Q07")
+        verdicts = []
+        for _ in range(3):
+            d = _work(t, t["good"])
+            try:
+                verdicts.append(G.grade(t, d)["details"]["adequacy"])
+            finally:
+                shutil.rmtree(d, ignore_errors=True)
+        self.assertEqual(verdicts, ["killed 4 mutants"] * 3)
+
     def test_instrument_grading_does_not_change_the_work_tree(self):
         t = TASKS[0]
         d = _work(t, t["good"])
