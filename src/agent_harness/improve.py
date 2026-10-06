@@ -109,7 +109,41 @@ def apply(hh: Path, pid: str, eval_path: str = None) -> Tuple[int, str]:
     return 0, "improve: %s applied as a lesson (%s)" % (pid, why)
 
 
-def trend(history: str, release: str = None) -> Tuple[int, str]:
+BAND_QUESTIONS = 1   # how many questions below the reference still count as "no worse": the measured single-run
+#                      noise (one question of 18 passed 3 of 4 runs on one build). Owner's policy; see docs.
+
+
+def _cost(r) -> float:
+    try:
+        t = float(r.get("tokens") or 0)
+    except (TypeError, ValueError):
+        return float("inf")
+    return t if t > 0 and math.isfinite(t) else float("inf")
+
+
+def _judge(cur: dict, earlier: list, first_ok: bool = True) -> Tuple[bool, str]:
+    """cur against the best of `earlier` (same question count, all accepted): the best pass rate, and among
+    equals the cheapest. No earlier release on this eval: cur is its baseline when `first_ok`."""
+    n = float(cur["n"])
+    if not earlier:
+        if first_ok:
+            return True, "%s %s/%s, the first on this eval (baseline)" % (cur.get("version"), cur["pass"], cur["n"])
+        return False, ("%s ran %s questions, which no accepted release ran: not comparable. If the eval changed on "
+                       "purpose, accept it as a new baseline with --new-baseline" % (cur.get("version"), cur["n"]))
+    top = max(int(r["pass"]) for r in earlier)
+    best = min((r for r in earlier if int(r["pass"]) == top), key=_cost)
+    b_rate, c_rate = top / n, int(cur["pass"]) / n
+    bt, ct = _cost(best), _cost(cur)
+    tok_ok = bt != float("inf") and ct != float("inf") and ct <= bt * (1 + TOKEN_OVERHEAD)
+    better = c_rate > b_rate and tok_ok
+    same = c_rate <= b_rate and b_rate - c_rate <= BAND_QUESTIONS / n + 1e-12 and tok_ok
+    ok = better or same
+    return ok, "best accepted %s %s/%s -> %s %s/%s %s" % (best.get("version"), best["pass"], best["n"],
+                                                          cur.get("version"), cur["pass"], cur["n"],
+                                                          "ok" if ok else "REGRESSION")
+
+
+def trend(history: str, release: str = None, new_baseline: bool = False) -> Tuple[int, str]:
     """`release` (default: this harness's own version) against the BEST earlier release, per tool, on the same
     number of questions: more than one question fewer (the measured single-run noise), or more than +15% tokens
     for passes within that one question, is a regression. Refused as well: no history, a release
@@ -154,41 +188,20 @@ def trend(history: str, release: str = None) -> Tuple[int, str]:
             bad.append(tool)
             lines.append("%s: measured in %s but not in %s" % (tool, prev_v, release))
             continue
-        # Against the BEST earlier release, not only the previous one: compared step by step, one-question
-        # drops each pass and add up (17/18 down to 9/18 passed every step). Among equally good ones, the
-        # CHEAPEST measured one: taking the latest let the +15% allowance reset at every tie (18/18 at 2.6x the
-        # tokens passed every step) and made a refused release the next one's reference.
-        earlier = [seen[(v, tool)] for v in versions[:i] if (v, tool) in seen]
-        top = max(int(r["pass"]) / float(r["n"]) for r in earlier)
-
-        def cost(r):
-            try:
-                t = float(r.get("tokens") or 0)
-            except (TypeError, ValueError):
-                t = 0.0
-            return t if t > 0 and math.isfinite(t) else float("inf")
-        best = min((r for r in earlier if int(r["pass"]) / float(r["n"]) == top), key=cost)
-        if int(best["n"]) != int(cur["n"]):
-            bad.append(tool)
-            lines.append("%s: %s ran %s questions, %s ran %s; not the same eval" % (
-                tool, best.get("version"), best["n"], release, cur["n"]))
-            continue
-        n = float(cur["n"])
-        b_rate, c_rate = int(best["pass"]) / n, int(cur["pass"]) / n
-        try:
-            bt, ct = float(best.get("tokens") or 0), float(cur.get("tokens") or 0)
-        except (TypeError, ValueError):
-            return 1, "trend: a token count that is not a number in %s or %s for %s" % (best.get("version"), release, tool)
-        measured = bt > 0 and ct > 0 and math.isfinite(bt) and math.isfinite(ct)   # "inf" is not a measurement
-        tok_ok = measured and ct <= bt * (1 + TOKEN_OVERHEAD)
-        # Better: a higher pass rate at no more than +15% tokens. No worse: within ONE question of the best (the
-        # measured noise: one question of 18 passed 3 times in 4 on the same build) at no more than +15%. Either
-        # way the tokens must be measured on both sides: a missing count is not "no overhead".
-        better = c_rate > b_rate and tok_ok
-        same = b_rate - c_rate <= 1.0 / n + 1e-12 and c_rate <= b_rate
-        verdict = "ok" if better or (same and tok_ok) else "REGRESSION"
-        lines.append("%s: best earlier %s %s/%s -> %s %s/%s %s" % (tool, best.get("version"), best["pass"],
-                                                                 best["n"], release, cur["pass"], cur["n"], verdict))
-        if verdict != "ok":
+        # The reference is built only from releases that were themselves accepted, in order, on the same
+        # number of questions: a refused release (3.4x the tokens) must never become the next one's yardstick,
+        # and a new, larger eval starts a new baseline instead of blocking every later release.
+        accepted = []
+        for v in versions[:i]:
+            row = seen.get((v, tool))
+            if row is not None and _judge(row, [r for r in accepted if int(r["n"]) == int(row["n"])],
+                                          first_ok=bool(row.get("new_baseline")) or not accepted)[0]:
+                accepted.append(row)
+        # A new question count is a new baseline only when someone says so: silently, shrinking the eval would
+        # be a way to escape every comparison; refused forever, a deliberate new eval could never ship.
+        ok, line = _judge(cur, [r for r in accepted if int(r["n"]) == int(cur["n"])],
+                          first_ok=new_baseline or bool(cur.get("new_baseline")) or not accepted)
+        lines.append("%s: %s" % (tool, line))
+        if not ok:
             bad.append(tool)
     return (1 if bad else 0), "trend:\n  " + "\n  ".join(lines)

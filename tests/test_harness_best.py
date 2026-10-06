@@ -52,6 +52,14 @@ def stub(bindir: Path, name: str, body: str) -> Path:
     return p
 
 
+def record_install(home: Path, plugin_id: str, sha: str):
+    """What Claude Code writes after `claude plugin install --scope project`: its own record of the commit."""
+    f = home / ".claude" / "plugins" / "installed_plugins.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"version": 2, "plugins": {plugin_id: [
+        {"scope": "project", "version": "1.0.0", "gitCommitSha": sha}]}}))
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="hbest-"))
@@ -213,6 +221,7 @@ class TestDiscover(Base):
         self.assertFalse(self.argv.exists())
         self.assertNotEqual(harness(self.home, *args, "--approve", "0" * 64, env=self.env)[0], 0)
         self.assertFalse(self.argv.exists())
+        record_install(self.home, "pg-tools@official", CATALOG[0]["ref"])
         rc, text = harness(self.home, *args, "--approve", digest, env=self.env)
         self.assertEqual(rc, 0, text)
         self.assertEqual(self.argv.read_text().split("\n")[:3], ["plugin", "install", "pg-tools@official"])
@@ -661,6 +670,7 @@ class TestReviewFindings(Base):
         from agent_harness import discover as D
         recs = D.search("postgres", str(cat), hh=self.hh())
         ok = next(r for r in recs if r["verdict"] == "pass")
+        record_install(self.home, ok["id"], ok["ref"])
         rc, text = harness(self.home, "discover", "--install", ok["id"], "--approve", ok["approve"],
                            "--catalog", str(cat), env=self.env)
         self.assertEqual(rc, 0, text)
@@ -845,6 +855,7 @@ class TestV041(Base):
         self.assertNotEqual(D.vet(mcp)[0], "block", "an npm package at an exact version is immutable")
 
     def install_with_listed_version(self, listed):
+        record_install(self.home, "pg-tools@official", listed if len(listed) == 40 else listed[0] * 40)
         listing = json.dumps([{"id": "pg-tools@official", "version": listed, "scope": "user"},   # real shape:
                               {"id": "pg-tools@official", "version": listed, "scope": "project"}])  # a bare list
         stub(self.bin, "claude", 'echo "$@" >> "$STUB_ARGV"\n'
@@ -863,7 +874,7 @@ class TestV041(Base):
         self.assertFalse((self.hh() / "installed-extensions.jsonl").exists())
 
     def test_the_approved_commit_installed_is_recorded(self):
-        rc, text = self.install_with_listed_version(CATALOG[0]["ref"][:12])
+        rc, text = self.install_with_listed_version(CATALOG[0]["ref"])
         self.assertEqual(rc, 0, text)
 
     # 2 review: the gate is tied to the diff that was reviewed
@@ -1000,11 +1011,12 @@ class TestV041b(Base):
 
     def test_install_reads_back_the_project_copy_not_a_user_one(self):
         from agent_harness import discover as D
-        rows = [{"id": "x@m", "version": "ffffffffffff", "scope": "user"},
-                {"id": "x@m", "version": "0123456789ab", "scope": "project"}]
-        with mock.patch.object(D, "_json", return_value=rows):
-            ok, why = D.verify_installed({"tool": "claude-code", "kind": "plugin", "id": "x@m",
-                                          "ref": "0123456789abcdef0123456789abcdef01234567"})
+        f = self.home / ".claude" / "plugins" / "installed_plugins.json"
+        f.parent.mkdir(parents=True)
+        want = "0123456789abcdef0123456789abcdef01234567"
+        f.write_text(json.dumps({"version": 2, "plugins": {"x@m": [
+            {"scope": "user", "gitCommitSha": "f" * 40}, {"scope": "project", "gitCommitSha": want}]}}))
+        ok, why = D.verify_installed({"tool": "claude-code", "kind": "plugin", "id": "x@m", "ref": want})
         self.assertTrue(ok, why)
 
     def test_a_base_that_looks_like_an_option_never_reaches_git(self):
@@ -1101,8 +1113,8 @@ class TestV041b(Base):
                     continue
                 if shape.search(line) and not any(a in " ".join(lines[n - 1:n + 2]) for a in allowed):
                     bad.append("%s:%d" % (f.name, n))
-                if re.match(r"\s*except ImportError", line) and n < len(lines) \
-                        and re.match(r"\s*(return|pass)\b", lines[n]):
+                if re.match(r"\s*except\s*\(?[^:]*\b(ImportError|ModuleNotFoundError)\b[^:]*\)?\s*(as\s+\w+)?\s*:",
+                            line) and n < len(lines) and re.match(r"\s*(return|pass)\b", lines[n]):
                     bad.append("%s:%d except ImportError: %s" % (f.name, n, lines[n].strip()))
         self.assertEqual(bad, [])
 
@@ -1137,11 +1149,11 @@ class TestV041c(Base):
     def test_an_override_install_with_no_pin_records_what_was_installed(self):
         from agent_harness import discover as D
         rec = {"tool": "claude-code", "kind": "plugin", "id": "x@m", "ref": None}
-        with mock.patch.object(D, "_json", return_value=[{"id": "x@m", "version": "abcdef123456", "scope": "project"}]):
-            ok, why = D.verify_installed(rec)
+        record_install(self.home, "x@m", "abcdef1234" * 4)
+        ok, why = D.verify_installed(rec)
         self.assertTrue(ok)
         self.assertIn("not verified", why)
-        self.assertEqual(rec["installed"], "abcdef123456")
+        self.assertEqual(rec["installed"], "abcdef1234" * 4)
 
 
 class TestV041d(Base):
@@ -1183,6 +1195,80 @@ class TestV041d(Base):
         from agent_harness.capture import is_check
         self.assertTrue(is_check("env -i PATH=/usr/bin pytest"))
         self.assertTrue(is_check("env -u HOME pytest -q"))
+
+
+class TestV042(Base):
+    """The GitHub-portfolio review of v0.4.1 (review/code-review/agent-harness-v0.4.1.md)."""
+
+    def test_a_stop_ends_a_running_gate_too(self):
+        """1: Ctrl-C during a drain must stop the gate the engine is running, promptly, before its side effect."""
+        import signal as _sig
+        import threading
+        import time as _t
+        repo = self.tmp / "proj"
+        (repo / "plan").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        (repo / "plan" / "g.md").write_text("## goal: g\n- [ ] 1. slow | gate: sleep 6; touch gate_done.txt\n")
+        stub(self.bin, "claude", 'echo \'{"type":"result","subtype":"success","is_error":false,"result":"ok"}\'\n')
+        threading.Timer(2.5, lambda: os.kill(os.getpid(), _sig.SIGINT)).start()
+        t0 = _t.time()
+        harness(self.home, "run", "g", env=dict(self.env, PLAN_RUNNER="claude"), cwd=repo)
+        took = _t.time() - t0
+        _t.sleep(5)
+        self.assertLess(took, 5.5, "the drain kept running the gate after the stop")
+        self.assertFalse((repo / "gate_done.txt").exists(), "the stopped gate's side effect landed")
+
+    def test_the_reviewer_is_told_about_new_untracked_files(self):
+        """2: a change made only of new files is bound to them, so the reviewer must be pointed at them."""
+        repo = git_repo(self.tmp / "u")
+        (repo / "payments.py").write_text("def pay(): pass\n")
+        stub(self.bin, "claude", 'printf "%s" "$2" > "$STUB_ARGV"\n'
+             'echo \'{"type":"result","is_error":false,"structured_output":{"findings":[]}}\'\n')
+        rc, text = harness(self.home, "review", "--run", "--out", str(repo / "r.json"), env=self.env, cwd=repo)
+        self.assertEqual(rc, 0, text)
+        self.assertIn("payments.py", self.argv.read_text())
+
+    def test_the_installed_commit_comes_from_claude_codes_record_not_the_manifest(self):
+        """3: a swapped plugin can put the approved SHA in its own `version`; Claude Code's gitCommitSha it can't."""
+        from agent_harness import discover as D
+        want = "0123456789abcdef0123456789abcdef01234567"
+        f = self.home / ".claude" / "plugins" / "installed_plugins.json"
+        f.parent.mkdir(parents=True)
+        f.write_text(json.dumps({"version": 2, "plugins": {"x@m": [
+            {"scope": "project", "version": want, "gitCommitSha": "f" * 40}]}}))
+        ok, why = D.verify_installed({"tool": "claude-code", "kind": "plugin", "id": "x@m", "ref": want})
+        self.assertFalse(ok, "a manifest version spoofed the approved commit")
+        f.write_text(json.dumps({"version": 2, "plugins": {"x@m": [
+            {"scope": "project", "version": "1.0.6", "gitCommitSha": want}]}}))
+        self.assertTrue(D.verify_installed({"tool": "claude-code", "kind": "plugin", "id": "x@m", "ref": want})[0],
+                        "an honest plugin with its own version number was rejected")
+
+    def trend(self, rows, *extra):
+        f = self.tmp / "h.jsonl"
+        f.write_text("".join(json.dumps(x) + "\n" for x in rows))
+        return harness(self.home, "improve", "--trend", str(f), "--release", rows[-1]["version"], *extra)[0]
+
+    def test_a_refused_release_never_becomes_the_reference(self):
+        """4: 0.2 is refused (3x tokens); 0.3 at 3.4x must be judged against 0.1, not 0.2."""
+        r = lambda v, p, t: {"version": v, "tool": "codex", "pass": p, "n": 18, "tokens": t}  # noqa: E731
+        rows = [r("0.1", 17, 100), r("0.2", 18, 300), r("0.3", 18, 340)]
+        self.assertNotEqual(self.trend(rows[:2]), 0)
+        self.assertNotEqual(self.trend(rows), 0)
+
+    def test_a_changed_eval_needs_an_explicit_new_baseline(self):
+        """5: a new question count is refused silently, accepted with --new-baseline, and recorded in the file."""
+        r = lambda v, p, n, **k: dict({"version": v, "tool": "codex", "pass": p, "n": n, "tokens": 100}, **k)  # noqa: E731
+        self.assertNotEqual(self.trend([r("0.1", 17, 18), r("0.2", 18, 20)]), 0)
+        self.assertEqual(self.trend([r("0.1", 17, 18), r("0.2", 18, 20)], "--new-baseline"), 0)
+        rows = [r("0.1", 17, 18), r("0.2", 18, 20, new_baseline=True), r("0.3", 18, 20)]
+        self.assertEqual(self.trend(rows), 0, "a recorded new baseline is the reference from then on")
+
+    def test_the_skip_guard_sees_the_other_import_error_shapes(self):
+        """7: `except ModuleNotFoundError: return` and `except (ImportError, OSError): return` are the same skip."""
+        pat = re.compile(r"\s*except\s*\(?[^:]*\b(ImportError|ModuleNotFoundError)\b[^:]*\)?\s*(as\s+\w+)?\s*:")
+        for shape in ("    except ModuleNotFoundError:", "    except (ImportError, OSError):",
+                      "    except ImportError as e:"):
+            self.assertTrue(pat.match(shape), shape)
 
 
 if __name__ == "__main__":

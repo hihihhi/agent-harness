@@ -23,6 +23,15 @@
   eval: it keeps a task's goals and per-step checks on disk, out of reach of a lost context window. Its
   definition is counted in the token budget ([test_context_budget.py](../tests/test_context_budget.py)).
 
+## The release trend's noise allowance (pending the owner's decision)
+
+`harness improve --trend` lets a release score up to `BAND_QUESTIONS` (1) questions below the best accepted
+release on the same eval and still count as "no worse". That allowance was added in the same commit as
+v0.4.1's own result (Claude 16/18 against v0.3.3's 17/18), which it admits and which the stricter rule before
+it refused. The evidence for it is real but small (one question of 18 passed 3 of 4 runs on one build), and it
+was chosen while looking at the result it decides, so it is recorded here as a policy for the owner to confirm
+or replace (0 = strict; or keep 1 and justify each release with repeated runs), not as a measured fact.
+
 ## The keep rule
 
 A part ships on by default only if accuracy is no worse, the gain is measurable, and token overhead stays

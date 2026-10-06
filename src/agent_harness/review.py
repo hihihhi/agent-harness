@@ -52,11 +52,14 @@ Answer with the JSON object only: {{"findings": [...]}}. An empty list means you
 
 
 def resolve_base(root: Path, base: str) -> Optional[str]:
-    """The commit `base` names, as a SHA, or None. Never passed to git as an option (`--output=...` is not a
-    ref), and stored as the SHA so committing the reviewed work does not unbind the review."""
+    """The commit `base` names, as a SHA, or None. Never passed to git as an option (anything starting with
+    `-` is refused here, which also works on git versions without --end-of-options), and stored as the SHA so
+    committing the reviewed work does not unbind the review."""
+    if not base or base.startswith("-"):
+        return None
     try:
-        p = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet", "--end-of-options",
-                            base + "^{commit}"], capture_output=True, text=True, timeout=60)
+        p = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet", base + "^{commit}"],
+                           capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         return None
     sha = p.stdout.strip()
@@ -221,7 +224,10 @@ def run(base: Optional[str], out: str, home: Path, timeout: int = 1800, root: Op
     if bound == "":
         return 2, "review: nothing to review (the diff against %s is empty); after a commit, use --base REF" % (
             base or "HEAD")
-    scope = "the current branch against %s" % base if base else "the uncommitted and staged changes (git diff HEAD)"
+    scope = ("everything that differs from %s: committed, staged and uncommitted (git diff %s)" % (base, base)
+             if base else "the uncommitted and staged changes (git diff HEAD)")
+    if untracked:   # `git diff` never shows these, but the review is bound to them: name them, so they are read
+        scope += ", AND these new files that git does not track yet (read each one in full): " + ", ".join(untracked[:50])
     prompt = _prompt(scope)
     runner = os.environ.get("PLAN_RUNNER", "").strip().lower() or ("claude" if shutil.which("claude") else "codex")
     if runner == "codex":

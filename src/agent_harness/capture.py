@@ -86,8 +86,8 @@ def _is_check_step(w: List[str]) -> bool:
     if i >= len(w):
         return False
     prog, rest = w[i].rsplit("/", 1)[-1], w[i + 1:]
-    if any(a in ("--version", "--help", "-h", "-V") for a in rest):
-        return False
+    if any(a in ("--version", "--help", "-h", "-V", "--collect-only", "--co", "-n", "--dry-run") for a in rest):
+        return False                                     # a listing or a dry run is not a check run
     if prog in RUNNERS:
         return True
     if prog == "ruff":

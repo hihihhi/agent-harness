@@ -89,9 +89,13 @@ def _status(p: Path) -> str:
 
 
 def prune(hh: Path) -> None:
-    """Bring every store back under its cap. Cheap: called by the Stop hook after each capture."""
-    _keep_tail(hh / "candidates.jsonl", CAPS["candidates"])
-    _keep_tail(hh / "installed-extensions.jsonl", CAPS["ledger"])
+    """Bring every store back under its cap. Cheap: called by the Stop hook after each capture. One store that
+    cannot be read (a stray non-UTF-8 byte) never stops the others from being pruned."""
+    for f, cap in ((hh / "candidates.jsonl", CAPS["candidates"]), (hh / "installed-extensions.jsonl", CAPS["ledger"])):
+        try:
+            _keep_tail(f, cap)
+        except (OSError, ValueError):
+            pass
     if (hh / "proposals").is_dir():   # only open ones: an applied proposal is the record that it was applied
         _keep_newest([p for p in (hh / "proposals").iterdir() if p.is_file() and _status(p) == "proposed"],
                      CAPS["proposals"])

@@ -260,10 +260,7 @@ def verify_installed(rec: dict) -> Tuple[bool, str]:
     commit that actually landed is read back and compared with the one approved."""
     if not (rec.get("tool") == "claude-code" and rec.get("kind") == "plugin"):
         return True, ""
-    d = _json(["claude", "plugin", "list", "--json"])
-    rows = d if isinstance(d, list) else (d.get("installed") if isinstance(d, dict) else None) or []
-    got = next((str(p.get("version") or "") for p in rows if isinstance(p, dict) and p.get("id") == rec.get("id")
-                and p.get("scope") == "project"), None)    # the copy this install made, not a user-scope one
+    got = installed_commit(rec.get("id"))
     want = str(rec.get("ref") or "").lower()
     if not SHA.match(want):           # only reachable with --override: nothing to compare against, so say so
         rec["installed"] = got
@@ -271,9 +268,26 @@ def verify_installed(rec: dict) -> Tuple[bool, str]:
     if not got:
         return False, "could not read back which commit of %s was installed" % rec.get("id")
     g = got.lower()
-    if not (len(g) >= 7 and (want.startswith(g) or g.startswith(want))):
+    if g != want:
         return False, "installed commit %s is not the approved %s" % (got, want[:12])
     return True, ""
+
+
+def installed_commit(plugin_id, home: Optional[Path] = None) -> Optional[str]:
+    """The commit Claude Code itself recorded for the project-scope install of `plugin_id`
+    (~/.claude/plugins/installed_plugins.json, gitCommitSha). Not the `version` field: that comes from the
+    plugin's own manifest, which a swapped plugin can set to the approved commit (and an honest "1.0.6"
+    never matches one)."""
+    p = (home or Path.home()) / ".claude" / "plugins" / "installed_plugins.json"
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    rows = ((d.get("plugins") or {}).get(plugin_id) if isinstance(d, dict) else None) or []
+    for r in rows if isinstance(rows, list) else []:
+        if isinstance(r, dict) and r.get("scope") == "project" and SHA.match(str(r.get("gitCommitSha") or "")):
+            return str(r["gitCommitSha"])
+    return None
 
 
 def rollback(rec: dict) -> str:

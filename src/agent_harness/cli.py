@@ -625,7 +625,7 @@ def cmd_improve(args) -> int:
     from . import improve
     _, hh = _paths(args)
     if args.trend:
-        rc, msg = improve.trend(args.trend, args.release)
+        rc, msg = improve.trend(args.trend, args.release, args.new_baseline)
     elif args.apply:
         rc, msg = improve.apply(hh, args.apply, args.eval)
     elif args.propose:
@@ -675,7 +675,10 @@ def cmd_run(args) -> int:
             got.append(signum)
             for s in stops:
                 signal.signal(s, signal.SIG_IGN)
-            p.send_signal(signum)
+            try:   # its whole process group: a gate the engine is running stops too, not only the engine
+                os.killpg(p.pid, signum)
+            except OSError:
+                p.send_signal(signum)
     old = {s: signal.signal(s, forward) for s in stops}
     try:
         for line in p.stdout:
@@ -744,7 +747,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--apply", metavar="ID")
     p.add_argument("--eval", metavar="FILE", help="paired eval result for --apply")
     p.add_argument("--trend", metavar="HISTORY", help="refuse a release that scores below the previous one")
-    p.add_argument("--release", help="the release --trend judges (default: the last one in the file)")
+    p.add_argument("--release", help="the release --trend judges (default: this version)")
+    p.add_argument("--new-baseline", action="store_true", help="with --trend: accept a changed eval as a new baseline")
     p.add_argument("--json", action="store_true")
     p = sub.add_parser("discover", help="find extensions for a need, vet them, install only what you approve")
     p.add_argument("need", nargs="?", default="")
