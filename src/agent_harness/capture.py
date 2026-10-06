@@ -25,9 +25,9 @@ STORE = "candidates.jsonl"
 # pytest docs/` names pytest and is not one. Parsed with shlex, so text in quotes or a heredoc is never a step;
 # wrappers are skipped (VAR=1, env, time, timeout N, nice, sudo -u X, xvfb-run, uv/poetry/pdm/hatch run, npx,
 # any python[3[.x]] -m, a venv's or /usr/bin's python); --version/--help is not a check run.
-WRAPPERS = {"env", "time", "nohup", "xvfb-run", "npx", "command", "exec"}
+WRAPPERS = {"time", "nohup", "xvfb-run", "npx", "command", "exec"}
 # Wrappers whose own options come before the wrapped command: {name: options that take a value}.
-OPT_WRAPPERS = {"nice": {"-n"}, "timeout": {"-s", "-k", "--signal", "--kill-after"}, "sudo": {"-u", "-g"},
+OPT_WRAPPERS = {"env": {"-u", "--unset", "-C", "--chdir"}, "nice": {"-n"}, "timeout": {"-s", "-k", "--signal", "--kill-after"}, "sudo": {"-u", "-g"},
                 "ionice": {"-c", "-n"}}
 RUNNERS = {"pytest", "py.test", "unittest", "mypy", "tsc", "phase-check", "phase-check.py"}
 RUFF_SUBCOMMANDS = {"format", "version", "rule", "config", "linter", "clean", "server", "analyze", "help"}

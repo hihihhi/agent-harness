@@ -664,20 +664,30 @@ def cmd_run(args) -> int:
     p = subprocess.Popen([str(engine), "run", args.slug, "--workers", str(max(1, args.workers))],
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
                          env=dict(os.environ, PYTHONUNBUFFERED="1"), start_new_session=True)
+    # The engine runs in its own session, so a stop reaches it only through here: Ctrl-C (SIGINT), a closed
+    # terminal (SIGHUP) or a kill (SIGTERM), from the terminal or sent to this process alone, is forwarded
+    # exactly once. A second would land in its cleanup and leave claimed nodes leased for hours.
+    got = []
+    stops = (signal.SIGINT, signal.SIGHUP, signal.SIGTERM)
+
+    def forward(signum, _frame):
+        if not got:
+            got.append(signum)
+            for s in stops:
+                signal.signal(s, signal.SIG_IGN)
+            p.send_signal(signum)
+    old = {s: signal.signal(s, forward) for s in stops}
     try:
         for line in p.stdout:
-            _out(line.rstrip("\n"))
-        return p.wait()
-    except KeyboardInterrupt:
-        # The engine runs in its own session, so an interrupt reaches it only through here, exactly once,
-        # whether it came from a terminal Ctrl-C or a SIGINT sent to this process alone; a second one would
-        # land in its cleanup and leave claimed nodes leased for hours, so further ones are ignored.
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        p.send_signal(signal.SIGINT)
-        for line in p.stdout:
-            _out(line.rstrip("\n"))
-        p.wait()
-        return 130
+            try:
+                _out(line.rstrip("\n"))
+            except OSError:
+                pass                                     # the terminal is gone (SIGHUP): keep draining
+        rc = p.wait()
+    finally:
+        for s, h in old.items():
+            signal.signal(s, h)
+    return 128 + got[0] if got else rc
 
 
 def cmd_review(args) -> int:

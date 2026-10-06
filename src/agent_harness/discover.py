@@ -251,7 +251,8 @@ def install(rec_id: str, approve: Optional[str], override: bool, hh: Path, catal
              "override": bool(override), "when": time.strftime("%Y-%m-%dT%H:%M:%S")}
     with open(hh / LEDGER, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
-    return 0, "discover: installed %s (%s); recorded in %s" % (rec_id, rec.get("ref"), hh / LEDGER)
+    return 0, "discover: installed %s (%s); recorded in %s%s" % (rec_id, rec.get("ref"), hh / LEDGER,
+                                                              "\n" + why if why else "")
 
 
 def verify_installed(rec: dict) -> Tuple[bool, str]:

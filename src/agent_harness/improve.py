@@ -110,8 +110,9 @@ def apply(hh: Path, pid: str, eval_path: str = None) -> Tuple[int, str]:
 
 
 def trend(history: str, release: str = None) -> Tuple[int, str]:
-    """`release` (default: this harness's own version) against the release before it, per tool: fewer passes,
-    or more than +15% tokens for the same passes, is a regression. Refused as well: no history, a release
+    """`release` (default: this harness's own version) against the release before it, per tool: fewer passes
+    by more than one standard error (sampling noise), or more than +15% tokens for passes within it, is a
+    regression. Refused as well: no history, a release
     recorded twice for a tool (it would hide the first result), a tool the previous release measured and this
     one did not, and a row with no tasks."""
     rows = []
@@ -165,7 +166,13 @@ def trend(history: str, release: str = None) -> Tuple[int, str]:
         # A higher pass rate is better unless both sides measured tokens and it cost more than the keep rule's
         # +15%; equal passes need measured tokens within it (a missing count is not "no overhead").
         better = c_rate > p_rate and (tok_ok or not measured)
-        verdict = "ok" if better or (c_rate == p_rate and tok_ok) else "REGRESSION"
+        # A single run of a few dozen questions moves by one answer on noise alone (measured: one question of
+        # 18 passed 3 times in 4 on the same build). So a drop counts only when it is larger than one standard
+        # error of the difference (floor: one question); a smaller one is "no worse" and needs the token rule.
+        se = max(math.sqrt(p_rate * (1 - p_rate) / float(prev["n"]) + c_rate * (1 - c_rate) / float(cur["n"])),
+                 1.0 / max(float(prev["n"]), float(cur["n"])))
+        same = abs(c_rate - p_rate) <= se + 1e-12
+        verdict = "ok" if better or (same and tok_ok) else "REGRESSION"
         lines.append("%s: %s %s/%s -> %s %s/%s %s" % (tool, prev.get("version"), prev["pass"], prev["n"],
                                                      cur.get("version"), cur["pass"], cur["n"], verdict))
         if verdict != "ok":

@@ -75,6 +75,14 @@ def _untracked(root: Path, skip: set) -> Optional[list]:
                   if x and str((root / x).resolve()) not in skip)
 
 
+def _fingerprint(p: Path) -> str:
+    """Content and execute bit of one file, or "deleted"."""
+    try:
+        return ("x" if os.access(p, os.X_OK) else "-") + hashlib.sha256(p.read_bytes()).hexdigest()
+    except OSError:
+        return "deleted"
+
+
 def snapshot(root: Path, sha: str, exclude: Tuple[str, ...] = (), untracked: Optional[list] = None):
     """(sha256 over every file the change touches, the untracked list), or (None, None) on a git error, or
     ("", list) when there is nothing to review. A file is hashed as its path and its current bytes, so the
@@ -140,7 +148,10 @@ def gate(path: str, root: Optional[Path] = None) -> Tuple[int, str]:
     # Every untracked file that appeared since the review fails it, whatever its name (a Makefile, a
     # postinstall in package.json, a .pth file run at start-up are code), except what the reviewer itself
     # left behind while it ran (recorded as artefacts). Ignore anything else in .gitignore, or review again.
-    seen = set(rv["untracked"]) | set(str(x) for x in rv.get("artefacts") or [])
+    # An artefact is excused only while it is exactly what the reviewer's run left: rewritten afterwards (a
+    # repro test turned into something else), it is unreviewed code like any other new file.
+    arte = rv.get("artefacts") if isinstance(rv.get("artefacts"), dict) else {}
+    seen = set(rv["untracked"]) | {k for k, v in arte.items() if _fingerprint(root / k) in (v, "deleted")}
     new = [x for x in (_untracked(root, {str(Path(path).resolve())}) or []) if x not in seen]
     if new:
         return 1, "review: files added since the review were never reviewed: %s (review again, or .gitignore " \
@@ -251,13 +262,16 @@ def run(base: Optional[str], out: str, home: Path, timeout: int = 1800, root: Op
         return 2, "review: the reviewer returned no findings object (exit %s): %s" % (
             p.returncode, (p.stdout or p.stderr)[-300:])
     after = _untracked(root, {str(Path(out).resolve())}) or []
-    found["reviewed"] = {"base": sha, "untracked": untracked, "diff_sha256": bound,
-                         "artefacts": [x for x in after if x not in untracked]}   # what the reviewer's run left
+    arte = {x: _fingerprint(root / x) for x in after if x not in untracked}      # what appeared while it ran
+    found["reviewed"] = {"base": sha, "untracked": untracked, "diff_sha256": bound, "artefacts": arte}
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(json.dumps(found, indent=1) + "\n", encoding="utf-8")
     n = len(found["findings"])
     must = sum(1 for f in found["findings"] if isinstance(f, dict) and f.get("severity") == "must-fix")
-    return 0, "review: %d finding(s), %d must-fix -> %s (gate it: harness review --gate %s)" % (n, must, out, out)
+    note = ("\nnew files while it ran (excused only while unchanged; check none was written by something "
+            "else): %s" % ", ".join(sorted(arte)[:10])) if arte else ""
+    return 0, "review: %d finding(s), %d must-fix -> %s (gate it: harness review --gate %s)%s" % (
+        n, must, out, out, note)
 
 
 def default_out(root: Path) -> str:

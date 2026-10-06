@@ -509,6 +509,12 @@ class TestTrend(Base):
                 {"version": "0.4.0", "tool": "codex", "pass": 16, "n": 18, "tokens": 1000}]
         self.assertEqual(self.check(rows), 0)
 
+    def test_a_one_question_dip_is_noise_but_two_are_not(self):
+        r = lambda v, p: {"version": v, "tool": "claude-code", "pass": p, "n": 18, "tokens": 1000}  # noqa: E731
+        self.assertEqual(self.check([r("0.3", 17), r("0.4", 16)]), 0, "one question of 18 is within noise")
+        self.assertNotEqual(self.check([r("0.3", 17), r("0.4", 15)]), 0, "two questions of 18 is a regression")
+        self.assertNotEqual(self.check([r("0.3", 18), r("0.4", 15)]), 0)
+
     def test_no_history_is_not_a_pass(self):
         self.assertNotEqual(self.check([]), 0)
 
@@ -1036,7 +1042,8 @@ class TestV041b(Base):
         src = (ROOT / "src" / "agent_harness" / "cli.py").read_text()
         body = src[src.index("def cmd_run"):src.index("\ndef ", src.index("def cmd_run") + 5)]
         self.assertIn("start_new_session=True", body)
-        self.assertEqual(body.count("send_signal(signal.SIGINT)"), 1)
+        self.assertEqual(body.count("p.send_signal("), 1, "the engine must get exactly one forwarded stop")
+        self.assertIn("signal.SIGHUP", body)
         self.assertIn("PYTHONUNBUFFERED", body)
 
     def test_every_skip_names_an_environmental_reason(self):
@@ -1106,6 +1113,47 @@ class TestV041c(Base):
         self.assertTrue(ok)
         self.assertIn("not verified", why)
         self.assertEqual(rec["installed"], "abcdef123456")
+
+
+class TestV041d(Base):
+    """The fourth verification round (R1, R2 and two gaps)."""
+
+    def test_an_artefact_rewritten_after_the_review_fails_the_gate(self):
+        repo = git_repo(self.tmp / "r1")
+        (repo / "a.py").write_text("x = 1\n")
+        stub(self.bin, "claude", 'printf "def test_x(): pass\\n" > conftest.py\n'     # a repro test it wrote
+             'echo \'{"type":"result","is_error":false,"structured_output":{"findings":[]}}\'\n')
+        out = repo / ".agent-harness-review.json"
+        rc, text = harness(self.home, "review", "--run", "--out", str(out), env=self.env, cwd=repo)
+        self.assertEqual(rc, 0, text)
+        self.assertIn("conftest.py", text, "the run must name what appeared while it ran")
+        self.assertEqual(harness(self.home, "review", "--gate", str(out), cwd=repo)[0], 0, "unchanged: excused")
+        (repo / "conftest.py").write_text("import os; os.system('true')\n")
+        self.assertNotEqual(harness(self.home, "review", "--gate", str(out), cwd=repo)[0], 0,
+                            "a rewritten artefact passed the gate")
+
+    def test_a_hangup_reaches_the_engine_once(self):
+        """Closing the terminal (SIGHUP to the harness) must reach an engine running in its own session."""
+        import signal as _sig
+        import threading
+        from agent_harness import installer as I
+        fake = self.tmp / "pkg"
+        (fake / "workgraph" / "bin").mkdir(parents=True)
+        log = self.tmp / "engine.log"
+        eng = fake / "workgraph" / "bin" / "plan"
+        eng.write_text("#!/bin/bash\ntrap 'echo got-HUP >> %s; exit 0' HUP\necho started\n"
+                       "for i in $(seq 100); do sleep 0.1; done\necho never-stopped >> %s\n" % (log, log))
+        eng.chmod(0o755)
+        threading.Timer(1.0, lambda: os.kill(os.getpid(), _sig.SIGHUP)).start()
+        with mock.patch.object(I, "PKG_DIR", fake):
+            rc, text = harness(self.home, "run", "g")
+        self.assertEqual(log.read_text().split(), ["got-HUP"])
+        self.assertEqual(rc, 128 + _sig.SIGHUP)
+
+    def test_env_options_before_a_check(self):
+        from agent_harness.capture import is_check
+        self.assertTrue(is_check("env -i PATH=/usr/bin pytest"))
+        self.assertTrue(is_check("env -u HOME pytest -q"))
 
 
 if __name__ == "__main__":
