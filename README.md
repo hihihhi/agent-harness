@@ -157,7 +157,7 @@ Each row keeps its qualifier; the full numbers and caveats are in [docs/results.
 | What the harness adds to each Claude request | **~2,450 tokens, an upper bound** | most of the 17k → 37k gap in the eval came from the author's other plugins; Claude used 1.24x plain's tokens in the v0.1.1 eval. [test_context_budget.py](tests/test_context_budget.py) |
 | Guard, held out (v0.2) | **39/45 dangerous blocked (87%), 20/20 safe allowed** | the held-out claim; the set was written by the same build session that fixed the guard. [test_guard_heldout.py](tests/test_guard_heldout.py) |
 | Guard on agentic-os's corpus (v0.3) | **150/231 blocked, held out** | 221/221, and 183/186 on this repo's own corpus, only after fixing with both sets in view. [test_guard_cross.py](tests/test_guard_cross.py) |
-| Work graph (v0.3) | 181 of 203 real nodes gated | the author's own use, **not an A/B eval**, so the `plan` tool ships **off** (`HARNESS_ENABLE=plan`). [tests/workgraph](tests/workgraph) |
+| Work graph (v0.3) | 181 of 203 real nodes gated | the author's own use, **not an A/B eval**; the `plan` tool ships **on** since v0.3.3 by the owner's decision (`HARNESS_DISABLE=plan` turns it off). [tests/workgraph](tests/workgraph) |
 | Public synthetic eval | **no results** | the one attempt failed at the CLI's login: 6 runs, 0 tokens; no rerun planned. [record](eval/results/public-synthetic-2026-10-03-claude-opus-5-1m-not-run.json) |
 | Test suite, Python 3.9 (v0.3.2) | 836 passed, 2 skipped, 2 expected failures | `python3 -m pytest -q tests eval`; CI runs 3.9 and 3.12. [tests/](tests/) |
 
@@ -213,7 +213,8 @@ Each with its cost in full, the keep rule and the setups this replaced: [docs/de
   variable (`cd $DIR && rm -rf *` is judged as written), and a relative target in a `--check` call, which has
   no working directory to resolve it against (a real hook payload does). `sudo` is blocked outright.
 - **The work graph has no A/B eval.** Its evidence is the author's own use and an adversarial certification,
-  not a gain measured against plain, so under the keep rule the `plan` tool ships off (`HARNESS_ENABLE=plan`).
+  not a gain measured against plain. It ships on anyway (v0.3.3, the owner's decision): it is what keeps the goal and
+  each step's check on disk through context loss. `HARNESS_DISABLE=plan` turns it off.
 - **`--home DIR` and `HOME=DIR` differ:** only `HOME=DIR` installs VS Code extensions (a download) into the folder.
 - **Packaging was checked offline only,** and needs setuptools>=61 ([details](docs/usage.md#install-caveats)).
 

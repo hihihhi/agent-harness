@@ -1,8 +1,9 @@
 """The `plan` MCP tool: the work graph's command line, run in the project, for any tool the harness serves.
 
 One tool rather than one per subcommand, so it costs a single small definition in every tool's context.
-OFF by default under the repo's keep rule (src/agent_harness/mcp/checks.py): no A/B eval has measured its
-gain yet. HARNESS_ENABLE=plan turns it on. The engine's own protections do not depend on this switch.
+ON by default since v0.3.3 (the owner's decision, src/agent_harness/mcp/checks.py): goals and checks live on disk,
+so multi-step work survives context loss. HARNESS_DISABLE=plan turns it off. The engine's own protections do not
+depend on this switch.
 """
 import os
 import shlex

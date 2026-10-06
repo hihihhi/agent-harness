@@ -102,8 +102,8 @@ def _s(**props) -> dict:
 
 TOOLS = [
     {"name": "kb_search",
-     "description": "Search the knowledge base: section ids, one-line snippets and bytes. Use only when the "
-                    "Knowledge index in your rules has no fitting id; then kb_get the ids you need.",
+     "description": "Search the knowledge base (section ids, snippets, bytes), only when the Knowledge index in "
+                    "your rules has no fitting id; then kb_get the ids you need.",
      "inputSchema": _s(query={"type": "string", "_req": True}, k={"type": "integer", "default": 5},
                        min_score={"type": "number", "description": "0..1; weaker matches are dropped"})},
     {"name": "kb_get",
@@ -155,18 +155,16 @@ TOOLS = [
      "inputSchema": _s(query={"type": "string", "_req": True}, k={"type": "integer", "default": 5},
                        session={"type": "string", "description": "only this session id (prefix)"})},
     {"name": "skill_manage",
-     "description": "Methods learned from experience. create one when a task took several tool calls to find "
-                    "the working method, or the user corrected how to do it; body sections: ## When to Use, "
-                    "## Procedure, ## Pitfalls, ## Verification. update improves one (body, or old -> new); list, "
-                    "view, archive.",
+     "description": "Learned methods. create one when finding the working method took several tool calls, or the "
+                    "user corrected how; body: ## When to Use, ## Procedure, ## Pitfalls, ## Verification. "
+                    "update (body, or old -> new); list, view, archive.",
      "inputSchema": _s(action={"type": "string", "enum": ["create", "update", "list", "view", "archive"],
                                "_req": True},
                        name={"type": "string"}, description={"type": "string"}, body={"type": "string"},
                        old={"type": "string"}, new={"type": "string"})},
     {"name": "plan",
-     "description": "The work graph for multi-step work: plan/<slug>.md, each node done only when its gate "
-                    "command exits 0. args is a plan command line, e.g. new <slug> \"<goal>\", ready <slug>, "
-                    "context <slug> <id>, gate <slug> <id>, status <slug>, resume.",
+     "description": "Multi-step work as plan/<slug>.md: a node is done only when its gate exits 0. args: "
+                    "new <slug> \"<goal>\" | ready | context <slug> <id> | gate <slug> <id> | status | resume.",
      "inputSchema": _s(args={"type": "string", "_req": True}, project={"type": "string", "default": ""})},
     {"name": "run_checks",
      "description": "Run this project's own tests/checks (found automatically, or cmd) and return only the "

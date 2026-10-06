@@ -19,6 +19,7 @@ For every session and project. A project's own instructions win, except the firs
 Define "done" as a command that can fail, first (a bug: a failing reproduction; a data job: a tiny
 input, then a sample, then the full run). Make the smallest change, run the check, read the result,
 go back to where the evidence points. Same failure twice: change the approach (`work-loop` skill).
+Several steps: write them first with the `plan` tool, each with its check (it survives context loss).
 
 ## Model and effort
 
@@ -40,11 +41,9 @@ its sections. `kb_search` only when nothing in the index fits. Never read a whol
   decided in an earlier conversation, `session_search`. Empty means none.
 - Told to remember something, or a durable preference: `mem_add`, one short fact. Never secrets
   or personal data. After a check failed then passed, or a correction from the user: `lesson_add`.
-- A task took several tool calls to find the working method (a data query, a command sequence, a
-  fix), or the user corrected how to do it: before answering, save the method with `skill_manage`
-  create (or update the matching skill), so next time it is one step.
-- Unfinished multi-step work: `state_save` (goal, stage, decisions, next); after a compaction,
-  `state_load`. One-shot questions need neither.
+- Finding the working method took several tool calls, or the user corrected how: before answering,
+  `skill_manage` create (or update) it, so next time it is one step.
+- Unfinished work outside a plan: `state_save`; after a compaction, `state_load`. One-shot questions need neither.
 
 ## Web
 

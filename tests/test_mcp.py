@@ -135,7 +135,12 @@ class ToolsInProcessTests(TmpCase):
                           "session_recent", "session_search", "skill_manage", "run_checks", "plan"})
         from agent_harness.mcp.server import tool_list
         self.assertNotIn("run_checks", [t["name"] for t in tool_list()])   # off by default (v0.1.1 eval)
-        self.assertNotIn("plan", [t["name"] for t in tool_list()])         # off by default (v0.3, no eval yet)
+        self.assertIn("plan", [t["name"] for t in tool_list()])            # on by default since v0.3.3 (owner)
+        os.environ["HARNESS_DISABLE"] = "plan"
+        try:
+            self.assertNotIn("plan", [t["name"] for t in tool_list()])     # and anyone can turn it off
+        finally:
+            os.environ.pop("HARNESS_DISABLE", None)
         for t in TOOLS:
             self.assertTrue(t["description"] and "\n" not in t["description"])
 

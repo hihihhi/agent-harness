@@ -65,5 +65,5 @@ spends your Claude Code and Codex usage): [eval/README.md](../eval/README.md).
   `pip install --no-index --no-deps --no-build-isolation --target DIR .`; it needs setuptools>=61 (macOS's
   stock Python 3.9 with setuptools 58 installs an empty `UNKNOWN-0.0.0` that way). `pipx` and `uvx` were not
   available.
-- **The work graph is off by default.** `HARNESS_ENABLE=plan` turns on the `plan` MCP tool; `plan run`
+- **The work graph is on by default (v0.3.3).** `HARNESS_DISABLE=plan` turns the `plan` MCP tool off; `plan run`
   dispatches Claude Code workers only, and in the other tools the graph is driven one node at a time.

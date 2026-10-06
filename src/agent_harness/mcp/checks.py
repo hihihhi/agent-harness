@@ -44,8 +44,10 @@ def _names(var: str) -> set:
     return {x.strip() for x in os.environ.get(var, "").split(",") if x.strip()}
 
 
-# "plan" (v0.3, the work graph): off until an A/B eval measures a gain, like every arm before it.
-OFF_BY_DEFAULT = {"run_checks", "check_guard", "memory_snapshot", "skill_nudge", "plan"}   # docs/how-it-works.md
+# "plan" (the work graph) is ON by default since v0.3.3, by the owner's decision (2026-10-06): it is how a model
+# writes the goal and each step's check to disk, so the work loop, the gates and the eval keep running through
+# context loss and compaction -- the backbone of the harness, not an optional arm. HARNESS_DISABLE=plan turns it off.
+OFF_BY_DEFAULT = {"run_checks", "check_guard", "memory_snapshot", "skill_nudge"}   # docs/how-it-works.md
 
 
 def disabled(name: str) -> bool:

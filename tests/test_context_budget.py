@@ -80,6 +80,6 @@ def test_total_within_the_keep_rule(parts):
         total, BUDGET_BYTES)
 
 
-def test_the_work_graph_adds_nothing_while_it_is_off(parts):
-    """The v0.3 `plan` tool is off by default, so by default it must cost nothing per request."""
-    assert '"name":"plan"' not in parts["tools"]
+def test_the_work_graph_is_on_and_counted(parts):
+    """The `plan` tool is on by default since v0.3.3 (owner), so its definition is inside the budget above."""
+    assert '"name":"plan"' in parts["tools"]

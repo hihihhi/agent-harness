@@ -129,14 +129,15 @@ def _call_plan_tool(cwd, args):
     return server.Server().call_tool("plan", {"args": args, "project": cwd})
 
 
-def test_one_mcp_tool_exposes_the_graph_and_it_is_off_by_default(monkeypatch):
-    """Off until an A/B eval measures a gain: the repo's keep rule, applied to v0.3's own addition."""
+def test_one_mcp_tool_exposes_the_graph_and_it_is_on_by_default(monkeypatch):
+    """On by default since v0.3.3 (the owner: the graph is how goals and checks survive context loss); exactly one
+    tool, and HARNESS_DISABLE=plan takes it away."""
     from agent_harness.mcp import server
     monkeypatch.delenv("HARNESS_ENABLE", raising=False)
     monkeypatch.delenv("HARNESS_DISABLE", raising=False)
-    assert "plan" not in [t["name"] for t in server.tool_list()]
-    monkeypatch.setenv("HARNESS_ENABLE", "plan")
     assert [t["name"] for t in server.tool_list()].count("plan") == 1
+    monkeypatch.setenv("HARNESS_DISABLE", "plan")
+    assert "plan" not in [t["name"] for t in server.tool_list()]
 
 
 def test_the_mcp_tool_runs_a_command_in_the_project():

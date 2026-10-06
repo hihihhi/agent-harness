@@ -146,11 +146,12 @@ The rules ask for good behaviour; the harness enforces a floor where the tool al
   recall at the same tokens, and the nudge made Claude save skills but its repeat runs were 2/3 correct at
   1.42x tokens. `session_search` and `skill_manage` ship on: past-conversation recall went from 1/6 to 6/6,
   and Codex saved and reused a skill in 3/3 repeated procedures; Claude saved none unprompted.
-- **The work graph, off by default (v0.3)**: the `plan` MCP tool drives `src/agent_harness/workgraph`, a
+- **The work graph, on by default (v0.3.3)**: the `plan` MCP tool drives `src/agent_harness/workgraph`, a
   graph of gated nodes merged in from agentic-os (181 of 203 real nodes gated there, and adversarially
-  certified). Its evidence is use and an attack, not a gain measured against plain, so under the keep rule it
-  ships off: `HARNESS_ENABLE=plan`. The engine's protections (gates judged by the guard, tamper detection,
-  irreversible nodes held) do not depend on the switch. Off, it adds nothing to any request.
+  certified). Its evidence is use and an attack, not a gain measured against plain; the owner turned it on by
+  default in v0.3.3 because it is how the goal and each step's check survive context loss (`HARNESS_DISABLE=plan`
+  turns it off). Its definition costs ~340 bytes per request, inside the context budget. The engine's protections
+  (gates judged by the guard, tamper detection, irreversible nodes held) do not depend on the switch.
 - **Memory recall** (Claude Code): relevant memories are attached to each prompt, within a strict
   time limit, so the agent does not need to search for them.
 

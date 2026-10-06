@@ -86,8 +86,8 @@ directory to resolve it against (a real hook payload does). v0.2 had 16 known ga
 ## The work graph (v0.3, from agentic-os)
 
 **181 of 203 real nodes gated** across ten graphs; adversarially certified: 29 agents, 21 findings, 20 confirmed,
-all closed. This is the author's own use, **not an A/B eval**, so under the keep rule the `plan` tool ships
-**off** (`HARNESS_ENABLE=plan`). Its own suites came with it: [tests/workgraph](../tests/workgraph).
+all closed. This is the author's own use, **not an A/B eval**; since v0.3.3 the `plan` tool ships **on** by the
+owner's decision (`HARNESS_DISABLE=plan` turns it off). Its own suites came with it: [tests/workgraph](../tests/workgraph).
 
 ## Tests
 
