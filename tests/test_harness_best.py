@@ -513,7 +513,18 @@ class TestTrend(Base):
         r = lambda v, p: {"version": v, "tool": "claude-code", "pass": p, "n": 18, "tokens": 1000}  # noqa: E731
         self.assertEqual(self.check([r("0.3", 17), r("0.4", 16)]), 0, "one question of 18 is within noise")
         self.assertNotEqual(self.check([r("0.3", 17), r("0.4", 15)]), 0, "two questions of 18 is a regression")
+        self.assertNotEqual(self.check([r("0.3", 16), r("0.4", 14)]), 0)
         self.assertNotEqual(self.check([r("0.3", 18), r("0.4", 15)]), 0)
+
+    def test_one_question_drops_cannot_add_up(self):
+        rows = [{"version": "v%d" % k, "tool": "claude-code", "pass": 17 - k, "n": 18, "tokens": 1000} for k in range(9)]
+        caught = [rows[k]["version"] for k in range(1, 9) if self.check(rows[:k + 1]) != 0]
+        self.assertEqual(caught[:1], ["v2"], "a steady decline must be refused at its second step")
+
+    def test_a_different_question_count_is_not_comparable(self):
+        r = [{"version": "a", "tool": "codex", "pass": 17, "n": 18, "tokens": 1000},
+             {"version": "b", "tool": "codex", "pass": 3, "n": 4, "tokens": 1000}]
+        self.assertNotEqual(self.check(r), 0)
 
     def test_no_history_is_not_a_pass(self):
         self.assertNotEqual(self.check([]), 0)

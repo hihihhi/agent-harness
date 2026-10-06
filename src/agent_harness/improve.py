@@ -110,9 +110,9 @@ def apply(hh: Path, pid: str, eval_path: str = None) -> Tuple[int, str]:
 
 
 def trend(history: str, release: str = None) -> Tuple[int, str]:
-    """`release` (default: this harness's own version) against the release before it, per tool: fewer passes
-    by more than one standard error (sampling noise), or more than +15% tokens for passes within it, is a
-    regression. Refused as well: no history, a release
+    """`release` (default: this harness's own version) against the BEST earlier release, per tool, on the same
+    number of questions: more than one question fewer (the measured single-run noise), or more than +15% tokens
+    for passes within that one question, is a regression. Refused as well: no history, a release
     recorded twice for a tool (it would hide the first result), a tool the previous release measured and this
     one did not, and a row with no tasks."""
     rows = []
@@ -149,32 +149,36 @@ def trend(history: str, release: str = None) -> Tuple[int, str]:
     tools = sorted({t for v, t in seen if v == prev_v}, key=str)
     bad, lines = [], []
     for tool in tools:
-        prev, cur = seen[(prev_v, tool)], seen.get((release, tool))
+        cur = seen.get((release, tool))
         if cur is None:
             bad.append(tool)
             lines.append("%s: measured in %s but not in %s" % (tool, prev_v, release))
             continue
-        p_rate, c_rate = int(prev["pass"]) / float(prev["n"]), int(cur["pass"]) / float(cur["n"])
-        # Equal passes are only "no worse" when tokens were measured on both sides and stayed within +15%;
-        # a missing count is not "no overhead".
+        # Against the BEST earlier release, not only the previous one: compared step by step, one-question
+        # drops each pass and add up (17/18 down to 9/18 passed every step). Ties go to the latest.
+        earlier = [seen[(v, tool)] for v in versions[:i] if (v, tool) in seen]
+        best = max(reversed(earlier), key=lambda r: int(r["pass"]) / float(r["n"]))
+        if int(best["n"]) != int(cur["n"]):
+            bad.append(tool)
+            lines.append("%s: %s ran %s questions, %s ran %s; not the same eval" % (
+                tool, best.get("version"), best["n"], release, cur["n"]))
+            continue
+        n = float(cur["n"])
+        b_rate, c_rate = int(best["pass"]) / n, int(cur["pass"]) / n
         try:
-            pt, ct = float(prev.get("tokens") or 0), float(cur.get("tokens") or 0)
+            bt, ct = float(best.get("tokens") or 0), float(cur.get("tokens") or 0)
         except (TypeError, ValueError):
-            return 1, "trend: a token count that is not a number in %s or %s for %s" % (prev_v, release, tool)
-        measured = pt > 0 and ct > 0 and math.isfinite(pt) and math.isfinite(ct)   # "inf" is not a measurement
-        tok_ok = measured and ct <= pt * (1 + TOKEN_OVERHEAD)
-        # A higher pass rate is better unless both sides measured tokens and it cost more than the keep rule's
-        # +15%; equal passes need measured tokens within it (a missing count is not "no overhead").
-        better = c_rate > p_rate and (tok_ok or not measured)
-        # A single run of a few dozen questions moves by one answer on noise alone (measured: one question of
-        # 18 passed 3 times in 4 on the same build). So a drop counts only when it is larger than one standard
-        # error of the difference (floor: one question); a smaller one is "no worse" and needs the token rule.
-        se = max(math.sqrt(p_rate * (1 - p_rate) / float(prev["n"]) + c_rate * (1 - c_rate) / float(cur["n"])),
-                 1.0 / max(float(prev["n"]), float(cur["n"])))
-        same = abs(c_rate - p_rate) <= se + 1e-12
+            return 1, "trend: a token count that is not a number in %s or %s for %s" % (best.get("version"), release, tool)
+        measured = bt > 0 and ct > 0 and math.isfinite(bt) and math.isfinite(ct)   # "inf" is not a measurement
+        tok_ok = measured and ct <= bt * (1 + TOKEN_OVERHEAD)
+        # Better: a higher pass rate, unless both sides measured tokens and it cost more than the keep rule's +15%.
+        # No worse: within ONE question of the best (the measured noise: one question of 18 passed 3 times in 4
+        # on the same build), and tokens measured and within +15% (a missing count is not "no overhead").
+        better = c_rate > b_rate and (tok_ok or not measured)
+        same = b_rate - c_rate <= 1.0 / n + 1e-12 and c_rate <= b_rate
         verdict = "ok" if better or (same and tok_ok) else "REGRESSION"
-        lines.append("%s: %s %s/%s -> %s %s/%s %s" % (tool, prev.get("version"), prev["pass"], prev["n"],
-                                                     cur.get("version"), cur["pass"], cur["n"], verdict))
+        lines.append("%s: best earlier %s %s/%s -> %s %s/%s %s" % (tool, best.get("version"), best["pass"],
+                                                                 best["n"], release, cur["pass"], cur["n"], verdict))
         if verdict != "ok":
             bad.append(tool)
     return (1 if bad else 0), "trend:\n  " + "\n  ".join(lines)
