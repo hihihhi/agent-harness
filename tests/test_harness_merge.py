@@ -92,6 +92,18 @@ class TestAutoUpdate(Base):
         self.assertNotIn("self-update", (self.home / ".claude" / "settings.json").read_text())
 
 
+class TestReinstallKeepsOtherTools(Base):
+    def test_installing_for_one_tool_keeps_the_others_already_installed_working(self):
+        """Found on the owner's Mac: VS Code's prompt files live under the harness's content folder, which a
+        re-install for Claude Code alone replaced, so `harness doctor` failed for VS Code."""
+        (self.home / "Library" / "Application Support" / "Code" / "User").mkdir(parents=True)
+        self.assertEqual(run(self.home, "install", "--yes", "--tools", "copilot-vscode")[0], 0)
+        self.assertEqual(run(self.home, "doctor")[0], 0, "control: doctor passes after the first install")
+        self.assertEqual(run(self.home, "install", "--yes", "--tools", "claude-code")[0], 0)
+        rc, out = run(self.home, "doctor")
+        self.assertEqual(rc, 0, out)
+
+
 class TestProfileSkills(Base):
     def test_a_profile_skill_takes_the_place_of_the_harness_skill_of_that_name(self):
         prof = self.tmp / "p"

@@ -166,7 +166,10 @@ def cmd_install(args) -> int:
     I.copy_harness(hh, source, profile_dir if profile_dir != hh / "profile" else None)
     installed_profile = hh / "profile" if (hh / "profile").is_dir() else None
     ctx = build_ctx(home, hh, hh / "content", installed_profile, project, extra, with_index=True)
-    changes = [(n, adapters[n].plan(ctx)) for n in chosen]
+    # the content folder was just replaced, so the tools installed earlier are refreshed too (as `update` does):
+    # their files live there, and every tool on the machine gets the same rules
+    earlier = [n for n in state.get("tools", []) if n in adapters and n not in chosen]
+    changes = [(n, adapters[n].plan(ctx)) for n in chosen + earlier]
     state = I.apply(hh, changes, state, [home] + ([project] if project else []))
     state.update({"source": str(source), "project": str(project) if project else None,
                   "tools": sorted(set(state.get("tools", [])) | set(chosen))})
