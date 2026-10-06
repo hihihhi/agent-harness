@@ -1805,14 +1805,18 @@ def cmd_doctor(a):
             add("ok", "python", f"{mine} at {py}")
 
     # --- the worker binary the orchestrator dispatches -------------------
-    claude = shutil.which("claude")
-    cver = _probe([claude, "--version"]) if claude else None
+    # The binary runner() will actually dispatch: with PLAN_RUNNER=codex a missing `claude` is irrelevant,
+    # and checking it anyway failed doctor on a machine whose Codex workers were fine.
+    rn = runner()
+    exe = shutil.which(rn)
+    cver = _probe([exe, "--version"]) if exe else None
+    hint = "`claude -p`" if rn == "claude" else "`codex exec`"
     if cver is None:
-        add("FAIL", "claude", "not runnable on PATH — `plan run` dispatches `claude -p` for "
-                              "every node, so an unattended drain would burn its whole round "
-                              "cap on dispatch failures and change nothing")
+        add("FAIL", rn, f"not runnable on PATH — `plan run` dispatches {hint} for "
+                        "every node, so an unattended drain would burn its whole round "
+                        "cap on dispatch failures and change nothing")
     else:
-        add("ok", "claude", f"{cver} at {claude}")
+        add("ok", rn, f"{cver} at {exe} (PLAN_RUNNER picks claude or codex)")
 
     # --- the property tier's only dependency -----------------------------
     hv = _probe([py or sys.executable, "-c", "import hypothesis; print(hypothesis.__version__)"])
