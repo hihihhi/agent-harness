@@ -59,8 +59,13 @@ def approval(rec: dict) -> str:
 def vet(rec: dict) -> Tuple[str, List[str]]:
     why_block, why_warn = [], []
     ref = str(rec.get("ref") or "")
-    if not (SHA.match(ref) or EXACT_VERSION.match(ref)):
+    # A registry version (npm, PyPI, Open VSX) is immutable once published; a plugin's "version" is a field in
+    # a manifest anyone can repoint, so a plugin is pinned only by a commit SHA.
+    immutable = rec.get("kind") in ("mcp", "editor-extension")
+    if not (SHA.match(ref) or (immutable and EXACT_VERSION.match(ref))):
         why_block.append("not pinned (ref %r): it can change after you approve it" % (ref or "none"))
+    if rec.get("tool") == "codex" and rec.get("kind") == "plugin":
+        why_block.append("Codex can neither install a pinned commit nor report which one it installed")
     text = " ".join(str(rec.get(k) or "") for k in ("id", "name", "description", "publisher"))
     if INVISIBLE.search(text):
         why_block.append("invisible Unicode in its name or description")
@@ -237,12 +242,40 @@ def install(rec_id: str, approve: Optional[str], override: bool, hh: Path, catal
         return 2, "discover: install failed to run (%s)" % e
     if p.returncode != 0:
         return p.returncode, "discover: install exited %d: %s" % (p.returncode, (p.stderr or p.stdout)[-300:])
+    ok, why = verify_installed(rec)
+    if not ok:
+        return 1, "discover: %s; it was removed again. %s" % (why, rollback(rec))
     hh.mkdir(parents=True, exist_ok=True)
     entry = {"id": rec_id, "ref": rec.get("ref"), "approved": digest, "command": cmd, "verdict": verdict,
              "override": bool(override), "when": time.strftime("%Y-%m-%dT%H:%M:%S")}
     with open(hh / LEDGER, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
     return 0, "discover: installed %s (%s); recorded in %s" % (rec_id, rec.get("ref"), hh / LEDGER)
+
+
+def verify_installed(rec: dict) -> Tuple[bool, str]:
+    """`claude plugin install` installs whatever the marketplace serves now, not a commit it was given, so the
+    commit that actually landed is read back and compared with the one approved."""
+    if not (rec.get("tool") == "claude-code" and rec.get("kind") == "plugin"):
+        return True, ""
+    d = _json(["claude", "plugin", "list", "--json"])
+    got = next((str(p.get("version") or "") for p in (d.get("installed") if isinstance(d, dict) else None) or []
+                if p.get("id") == rec.get("id")), None)
+    want = str(rec.get("ref") or "")
+    if not got:
+        return False, "could not read back which commit of %s was installed" % rec.get("id")
+    if not (len(got) >= 7 and want.startswith(got)):
+        return False, "installed commit %s is not the approved %s" % (got, want[:12])
+    return True, ""
+
+
+def rollback(rec: dict) -> str:
+    try:
+        p = subprocess.run(["claude", "plugin", "uninstall", str(rec.get("id"))], capture_output=True, text=True,
+                           timeout=300, stdin=subprocess.DEVNULL)
+        return "Uninstalled." if p.returncode == 0 else "Uninstall exited %d: remove it by hand" % p.returncode
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return "Uninstall failed (%s): remove it by hand" % e
 
 
 def render(recs: List[dict]) -> str:

@@ -3,7 +3,7 @@
 The harness must stay megabytes, never gigabytes. What it writes and how each is bounded:
   candidates.jsonl            newest CAPS["candidates"] entries (capture appends every turn)
   installed-extensions.jsonl  newest CAPS["ledger"] entries
-  proposals/                  newest CAPS["proposals"] files
+  proposals/                  newest CAPS["proposals"] OPEN proposals (applied ones are the record, kept)
   backup/<timestamp>/         newest CAPS["backups"], plus EVERY backup installed.json still points to (your
                               original files: uninstall restores from them) and every uninstall stash
                               (backup/<ts>/modified/). If installed.json cannot be read, no backup is pruned.
@@ -81,12 +81,20 @@ def _keep_newest(items: List[Path], n: int, by_name: bool = False) -> None:
             pass
 
 
+def _status(p: Path) -> str:
+    try:
+        return str(json.loads(p.read_text(encoding="utf-8")).get("status"))
+    except (OSError, ValueError, AttributeError):
+        return "unreadable"                     # kept: what cannot be read is not known to be prunable
+
+
 def prune(hh: Path) -> None:
     """Bring every store back under its cap. Cheap: called by the Stop hook after each capture."""
     _keep_tail(hh / "candidates.jsonl", CAPS["candidates"])
     _keep_tail(hh / "installed-extensions.jsonl", CAPS["ledger"])
-    if (hh / "proposals").is_dir():
-        _keep_newest([p for p in (hh / "proposals").iterdir() if p.is_file()], CAPS["proposals"])
+    if (hh / "proposals").is_dir():   # only open ones: an applied proposal is the record that it was applied
+        _keep_newest([p for p in (hh / "proposals").iterdir() if p.is_file() and _status(p) == "proposed"],
+                     CAPS["proposals"])
     refs = _referenced_backups(hh)
     if refs is not None and (hh / "backup").is_dir():
         _keep_newest([p for p in (hh / "backup").iterdir() if p.is_dir() and not p.is_symlink()

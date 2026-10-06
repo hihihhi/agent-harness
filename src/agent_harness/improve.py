@@ -67,7 +67,9 @@ def keep_rule(result: dict) -> Tuple[bool, str]:
         bt, ct = float(b["tokens"]), float(c["tokens"])
     except (KeyError, TypeError, ValueError) as e:
         return False, "the eval file is not {base: {pass, n, tokens}, cand: {...}} (missing %s)" % e
-    if bt <= 0 or ct <= 0:
+    if not (0 <= bp <= bn and 0 <= cp <= cn):
+        return False, "an impossible score (%d/%d, %d/%d)" % (bp, bn, cp, cn)
+    if not (math.isfinite(bt) and math.isfinite(ct)) or bt <= 0 or ct <= 0:
         return False, "token counts must be measured on both sides (%s vs %s)" % (bt, ct)
     if bn != cn or bn <= 0:
         return False, "base and candidate ran a different number of tasks (%d vs %d); not a paired eval" % (bn, cn)
@@ -134,7 +136,9 @@ def trend(history: str, release: str = None) -> Tuple[int, str]:
         seen[k] = r
         if r.get("version") not in versions:
             versions.append(r.get("version"))
-    release = release or versions[-1]
+    if not release:                              # the release being shipped: this version, not the file's last row
+        from . import __version__
+        release = __version__
     if release not in versions:
         return 1, "trend: no rows for release %s" % release
     i = versions.index(release)
@@ -149,7 +153,7 @@ def trend(history: str, release: str = None) -> Tuple[int, str]:
             bad.append(tool)
             lines.append("%s: measured in %s but not in %s" % (tool, prev_v, release))
             continue
-        p_rate, c_rate = prev["pass"] / float(prev["n"]), cur["pass"] / float(cur["n"])
+        p_rate, c_rate = int(prev["pass"]) / float(prev["n"]), int(cur["pass"]) / float(cur["n"])
         # Equal passes are only "no worse" when tokens were measured on both sides and stayed within +15%;
         # a missing count is not "no overhead".
         try:
@@ -162,7 +166,7 @@ def trend(history: str, release: str = None) -> Tuple[int, str]:
         # +15%; equal passes need measured tokens within it (a missing count is not "no overhead").
         better = c_rate > p_rate and (tok_ok or not measured)
         verdict = "ok" if better or (c_rate == p_rate and tok_ok) else "REGRESSION"
-        lines.append("%s: %s %d/%d -> %s %d/%d %s" % (tool, prev.get("version"), prev["pass"], prev["n"],
+        lines.append("%s: %s %s/%s -> %s %s/%s %s" % (tool, prev.get("version"), prev["pass"], prev["n"],
                                                      cur.get("version"), cur["pass"], cur["n"], verdict))
         if verdict != "ok":
             bad.append(tool)

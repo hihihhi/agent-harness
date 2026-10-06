@@ -13,12 +13,12 @@ Python 3.9 or newer, standard library only, under 20 MB. `harness` below is `pyt
 | `harness update` | refresh the rules and skills; memory and lessons are kept |
 | `harness uninstall` | restore every changed file from its backup and remove what was added |
 | `harness status --matrix` | which tool gets which feature, and why not where it does not |
-| `harness review --run` / `--gate FILE` | review the diff in a fresh context (the `review` tier); the gate fails on any must-fix, and on a missing or invalid review |
+| `harness review --run` / `--gate FILE` | review the diff in a fresh context (the `review` tier); the gate fails on any must-fix, on a missing or invalid review, and when the code changed since it was reviewed (the file records the diff it read); an empty diff is refused (after a commit, `--run --base REF`) |
 | `harness run <plan>` | drain a plan autonomously: each node to a worker on its tier, every gate run by the engine; `plan/<plan>.STOP` halts it |
 | `harness discover "<need>"` | search the Claude/Codex plugin lists, the MCP Registry and Open VSX; vet each item (pinned? hidden text? runs code?) |
-| `harness discover --install ID --approve SHA256` | install exactly the command shown, approved by its hash; recorded in `~/.agent-harness/installed-extensions.jsonl` |
+| `harness discover --install ID --approve SHA256` | install exactly the command shown, approved by its hash; a Claude Code plugin is checked afterwards against the approved commit and removed if it differs; recorded in `~/.agent-harness/installed-extensions.jsonl` |
 | `harness improve --propose` / `--apply ID --eval FILE` | lessons captured at each turn's end (a check that failed then passed, your corrections) that recur become proposals; one is applied only when a paired eval shows a gain within +15% tokens |
-| `harness improve --trend eval/results/history.jsonl` | refuse a release that scores below the one before it, per tool |
+| `harness improve --trend eval/results/history.jsonl [--release V]` | refuse a release (default: this version) that scores below the one before it, per tool, or that has no measured result |
 | `harness doctor` | also prunes every store to its cap and names the largest parts when the harness is over its footprint cap |
 
 A real install (without `--dry-run`) **replaces `~/.claude/CLAUDE.md`** and the other tools' instruction files

@@ -6,6 +6,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -327,7 +328,7 @@ def cmd_doctor(args) -> int:
     from . import storage
     try:
         storage.prune(hh)                        # every store back under its own cap first
-    except OSError as e:
+    except Exception as e:
         _out(f"[info] pruning stopped early: {e}")
     size = I.dir_size(hh)
     cap = WARM_CAP if state.get("extra_mcp") else BASE_CAP
@@ -658,25 +659,34 @@ def cmd_run(args) -> int:
     """`plan run` from the harness's own engine: one node per worker, the node's routing tier, and only the
     gate's exit code marks a node done. plan/<slug>.STOP halts it between rounds."""
     engine = I.PKG_DIR / "workgraph" / "bin" / "plan"
-    p = subprocess.run([str(engine), "run", args.slug, "--workers", str(max(1, args.workers))],
-                       capture_output=True, text=True)
-    _out((p.stdout + p.stderr).rstrip())
-    return p.returncode
+    # Streamed line by line: a drain runs for hours, and its round status, held nodes and gate failures are
+    # what the person watching needs while it runs, not after; Ctrl-C reaches the engine as SIGINT.
+    p = subprocess.Popen([str(engine), "run", args.slug, "--workers", str(max(1, args.workers))],
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    try:
+        for line in p.stdout:
+            _out(line.rstrip("\n"))
+        return p.wait()
+    except KeyboardInterrupt:
+        p.send_signal(signal.SIGINT)
+        p.wait()
+        return 130
 
 
 def cmd_review(args) -> int:
     from . import review
+    from .mcp.state import project_root
     if args.gate:
-        rc, msg = review.gate(args.gate)
+        rc, msg = review.gate(args.gate, Path(project_root(None)))
         _out(msg)
         return rc
     if not args.run:
         _out("harness review: --run to review the changes, --gate FILE to check a review")
         return 2
     home, _ = _paths(args)
-    from .mcp.state import project_root
-    out = args.out or review.default_out(Path(project_root(None)))
-    rc, msg = review.run(args.base, out, home)
+    root = Path(project_root(None))
+    out = args.out or review.default_out(root)
+    rc, msg = review.run(args.base, out, home, root=root)
     _out(msg)
     return rc
 

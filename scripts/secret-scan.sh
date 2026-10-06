@@ -14,12 +14,15 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 
 CRED='(sk-ant-[A-Za-z0-9_-]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[abprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|eyJ[A-Za-z0-9_-]{15,}\.eyJ[A-Za-z0-9_-]{15,}\.|(password|passwd|secret|api_?key|token)[[:space:]]*[:=][[:space:]]*["'"'"'][^"'"'"' ]{8,}["'"'"'])'
-IDENT='((^|[^0-9])(10|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]{1,3}\.[0-9]{1,3}|[A-Za-z0-9._%+-]+@(gmail|outlook|hotmail|yahoo|qq|163)\.com|/Users/[A-Za-z][A-Za-z0-9_.-]+/|/home/[A-Za-z][A-Za-z0-9_.-]+/)'
+IDENT='((^|[^0-9])(10|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]{1,3}\.[0-9]{1,3}|[A-Za-z0-9._%+-]+@(gmail|outlook|hotmail|yahoo|qq|163)\.com|/[Uu]sers/[A-Za-z][A-Za-z0-9_.-]+/|/home/[A-Za-z][A-Za-z0-9_.-]+/)'
 EXTRA="${SECRET_SCAN_EXTRA:-}"
 # lines that are allowed to look like a finding: fixtures that exist to test the scanner/guard. Not the bare
 # word "example": that dropped any key on a line saying "# Example only" (review, 2026-10-06).
 # /home/Test/ is the old check_guard.py docstring, in history since v0.2; /Users/alice/ a placeholder like alice.
 ALLOW='(secret-scan: allow|example\.com|/home/user/|/Users/me/|/Users/Shared/|/home/alice/|/Users/alice/|/home/Test/)'
+# For identifiers, an allowed substring excuses ITSELF, not its line: it is cut out before matching, so
+# a real home path next to an allowed one is still caught (review of v0.4.0). A marked line is excused whole.
+ALLOW_ID='(example\.com|/home/user/|/Users/me/|/Users/Shared/|/home/alice/|/Users/alice/|/home/Test/)'
 
 scan_text() {  # stdin -> matching lines on stdout
   # A credential is excused only by an explicit marker on its line: ALLOW (example.com, placeholder home paths)
@@ -31,7 +34,7 @@ scan_ident() {
   # Read stdin ONCE. This used to grep stdin twice; the first grep consumed all of it, so the EXTRA
   # patterns ran over nothing and could never match (found in v0.3 by planting a word and seeing PASS).
   local in; in=$(cat)
-  printf '%s\n' "$in" | grep -nE -- "$IDENT" | grep -vEi -- "$ALLOW"
+  printf '%s\n' "$in" | sed -E -e '/secret-scan: allow/s/.*//' -e "s#$ALLOW_ID##g" | grep -nE -- "$IDENT"
   [ -n "$EXTRA" ] && printf '%s\n' "$in" | grep -nEi -- "$EXTRA"
   return 0
 }
@@ -77,7 +80,9 @@ if [ "${1:-}" != "--tree-only" ] && git rev-parse --git-dir >/dev/null 2>&1 && g
   [ -n "$hist" ] && { echo "IN GIT HISTORY:"; printf '%s\n' "$hist" | head -20; fail=1; }
   # The scanner's own history is still scanned for credentials; only its planted LAN fixture, older than the
   # allow marker, is exempt from the identifier scan.
-  own=$(git log -p --all --no-color -- scripts/secret-scan.sh | grep -E '^\+' | grep -v '^+++' | scan_text)
+  # Its identifier scan too, with only the planted LAN fixture (older than the allow marker) cut out.
+  own=$(git log -p --all --no-color -- scripts/secret-scan.sh | grep -E '^\+' | grep -v '^+++' \
+        | sed 's/192\.168\.1\.20//g' | scan_both)
   [ -n "$own" ] && { echo "IN THE SCANNER'S OWN HISTORY:"; printf '%s\n' "$own" | head -20; fail=1; }
 fi
 

@@ -4,13 +4,17 @@
     harness review --gate FILE                       exit 0 only for a valid file with no must-fix
 
 No review tool blocks anything by default (Claude's check run is neutral, Copilot only comments), so the gate
-is here, and a missing or invalid findings file FAILS it: an absent review must never read as a clean one. The
+is here, and a missing or invalid findings file FAILS it: an absent review must never read as a clean one. A
+review is also bound to the code it read: the file records the base and a hash of the diff, and the gate
+recomputes it, so a review left over from last week, or written by hand, never passes for changes nobody read.
+An empty diff is refused, not reviewed as clean (after a commit, review the branch with --base). The
 reviewer is the `review` routing tier in a fresh `claude -p` (or `codex exec`) context, told to verify each
 finding by reading the code or running a command before reporting it, because same-model agreement is not
 evidence; a finding it could not verify is reported as such, not dropped silently.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -43,7 +47,35 @@ Answer with the JSON object only: {{"findings": [...]}}. An empty list means you
 """
 
 
-def gate(path: str) -> Tuple[int, str]:
+def binding(root: Path, base: str, exclude: Tuple[str, ...] = ()) -> Optional[str]:
+    """sha256 of what a review reads: `git diff <base>` plus every untracked file, minus the findings file."""
+    try:
+        d = subprocess.run(["git", "-C", str(root), "diff", base], capture_output=True, timeout=120)
+        u = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard", "-z"],
+                           capture_output=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if d.returncode != 0 or u.returncode != 0:
+        return None
+    skip = {str(Path(x).resolve()) for x in exclude}
+    h = hashlib.sha256(d.stdout)
+    untracked = 0
+    for rel in sorted(x for x in u.stdout.decode("utf-8", "replace").split("\0") if x):
+        p = (root / rel)
+        if str(p.resolve()) in skip:
+            continue
+        untracked += 1
+        h.update(b"\0" + rel.encode() + b"\0")
+        try:
+            h.update(p.read_bytes())
+        except OSError:
+            pass
+    if not d.stdout.strip() and not untracked:
+        return ""                                    # nothing to review
+    return h.hexdigest()
+
+
+def gate(path: str, root: Optional[Path] = None) -> Tuple[int, str]:
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
@@ -55,6 +87,12 @@ def gate(path: str) -> Tuple[int, str]:
         if not isinstance(f, dict) or f.get("severity") not in ("must-fix", "suggestion") \
                 or not all(isinstance(f.get(x), str) and f.get(x) for x in ("file", "summary")):
             return 2, "review: finding %d in %s is malformed (%r); fix the review, it is not passed" % (k, path, f)
+    rv = data.get("reviewed") if isinstance(data.get("reviewed"), dict) else {}
+    if not rv.get("diff_sha256") or not rv.get("base"):
+        return 2, "review: %s is not tied to any code (no reviewed base and diff hash); run harness review --run" % path
+    now = binding(Path(root or Path.cwd()), str(rv["base"]), exclude=(path,))
+    if now != rv["diff_sha256"]:
+        return 1, "review: the code changed since %s was reviewed (against %s); review it again" % (path, rv["base"])
     must = [f for f in found if f["severity"] == "must-fix"]
     if must:
         lines = ["  %s:%s %s" % (f.get("file", "?"), f.get("line", "?"), f.get("summary", "")) for f in must]
@@ -107,7 +145,14 @@ def _parse(stdout: str) -> Optional[dict]:
     return None
 
 
-def run(base: Optional[str], out: str, home: Path, timeout: int = 1800) -> Tuple[int, str]:
+def run(base: Optional[str], out: str, home: Path, timeout: int = 1800, root: Optional[Path] = None) -> Tuple[int, str]:
+    root = Path(root or Path.cwd())
+    bound = binding(root, base or "HEAD", exclude=(out,))
+    if bound is None:
+        return 2, "review: not a git repository, or `git diff %s` failed" % (base or "HEAD")
+    if bound == "":
+        return 2, "review: nothing to review (the diff against %s is empty); after a commit, use --base REF" % (
+            base or "HEAD")
     scope = "the current branch against %s" % base if base else "the uncommitted and staged changes (git diff HEAD)"
     prompt = _prompt(scope)
     runner = os.environ.get("PLAN_RUNNER", "").strip().lower() or ("claude" if shutil.which("claude") else "codex")
@@ -115,6 +160,7 @@ def run(base: Optional[str], out: str, home: Path, timeout: int = 1800) -> Tuple
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(SCHEMA, f)
         cmd = ["codex", "exec", "--json", "--sandbox", "read-only", "--output-schema", f.name, prompt]
+        schema_file = f.name
     else:
         cmd = ["claude", "-p", prompt, "--output-format", "json", "--json-schema", json.dumps(SCHEMA),
                "--setting-sources", "user", "--strict-mcp-config"]
@@ -126,6 +172,12 @@ def run(base: Optional[str], out: str, home: Path, timeout: int = 1800) -> Tuple
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired) as e:
         return 2, "review: the reviewer could not run (%s)" % e
+    finally:
+        if runner == "codex":
+            try:
+                os.unlink(schema_file)
+            except OSError:
+                pass
     if runner == "codex":
         found = None
         for line in p.stdout.splitlines():
@@ -141,6 +193,7 @@ def run(base: Optional[str], out: str, home: Path, timeout: int = 1800) -> Tuple
     if not isinstance(found, dict) or not isinstance(found.get("findings"), list):
         return 2, "review: the reviewer returned no findings object (exit %s): %s" % (
             p.returncode, (p.stdout or p.stderr)[-300:])
+    found["reviewed"] = {"base": base or "HEAD", "diff_sha256": bound}
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(json.dumps(found, indent=1) + "\n", encoding="utf-8")
     n = len(found["findings"])

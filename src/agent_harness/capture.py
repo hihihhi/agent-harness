@@ -21,9 +21,18 @@ from typing import List, Optional
 from .redact import redact
 
 STORE = "candidates.jsonl"
-TEST_CMD = re.compile(r"\b(pytest|unittest|npm (run )?test|yarn test|pnpm test|make (test|check)|go test|cargo test"
-                      r"|ruff|mypy|tsc|plan(\.py)? gate|run_checks)\b")
-EXIT_LINE = re.compile(r"(?:Exit code|exit code|exited with code)\s*(-?\d+)")
+# A check is a command whose PROGRAM is a test runner or linter, in any `&&`/`;` step: `grep -rn pytest docs/`
+# names pytest and is not one. Wrappers (env assignments, python -m, uv run, npx, a venv's bin/) are skipped.
+CHECK_STEP = re.compile(r"^\s*(?:\w+=\S*\s+)*(?:(?:uv|poetry|pdm|hatch) run\s+|npx\s+|python3?(?:\.\d+)? -m\s+)?"
+                        r"(?:\S*/)?(pytest|unittest|ruff|mypy|tsc|phase-check(?:\.py)?|npm (?:run )?test|yarn test"
+                        r"|pnpm test|make (?:test|check)|go test|cargo test|plan(?:\.py)? gate)\b")
+# Claude Code's Bash tool reports a failing command as a result that STARTS with "Exit code N"; the same words
+# later in passing output ("the child exited with code 1 as expected") are output, not a status.
+EXIT_LINE = re.compile(r"\A\s*Exit code (-?\d+)")
+
+
+def is_check(cmd: str) -> bool:
+    return any(CHECK_STEP.match(step) for step in re.split(r"&&|\|\||;|\n", cmd))
 # Strict on purpose: "Stop the server" is an instruction, not a correction.
 CORRECTION = re.compile(r"^\s*(no[,.!]|nope\b|don'?t\b|do not\b|wrong\b|that'?s (wrong|not)|not like that)"
                         r"|\b(instead of|use \S+ (instead|not))\b", re.I)
@@ -86,7 +95,7 @@ def _checks(events) -> List[dict]:
                     calls[c.get("id")] = "run_checks"
                 elif name.endswith("__plan") and str(inp.get("args", "")).startswith("gate"):
                     calls[c.get("id")] = "plan " + str(inp.get("args"))
-                elif name == "Bash" and TEST_CMD.search(str(inp.get("command", ""))):
+                elif name == "Bash" and is_check(str(inp.get("command", ""))):
                     calls[c.get("id")] = str(inp.get("command"))   # whole: it is redacted before any cut
             elif c.get("type") == "tool_result" and c.get("tool_use_id") in calls:
                 text = _text(c.get("content"))
@@ -94,7 +103,7 @@ def _checks(events) -> List[dict]:
                 try:
                     code = int(json.loads(text).get("exit"))
                 except (ValueError, TypeError, AttributeError):
-                    m = EXIT_LINE.search(text)
+                    m = EXIT_LINE.match(text)
                     code = int(m.group(1)) if m else (1 if c.get("is_error") else 0)
                 out.append({"cmd": calls[c["tool_use_id"]], "exit": code, "text": text})
     return out
@@ -154,10 +163,15 @@ def capture_turn(hh: Path, transcript: str, session: str) -> List[dict]:
         pass
     new = [f for f in candidates(transcript, events) if f["key"] not in seen]   # the transcript is parsed once
     rows = record(hh, new)
-    from . import storage
-    storage.prune(hh)                            # capture runs every turn, so the cap is enforced here
+    # The marker is written BEFORE anything else can fail: if pruning raised first, the next Stop of this turn
+    # would count the same lesson again (one occurrence would then pass the "has recurred" rule).
     mark.parent.mkdir(parents=True, exist_ok=True)
     mark.write_text(json.dumps({"turn": turn, "keys": seen + [f["key"] for f in new]}), encoding="utf-8")
+    try:
+        from . import storage
+        storage.prune(hh)                        # capture runs every turn, so the cap is enforced here
+    except Exception:
+        pass
     return rows
 
 

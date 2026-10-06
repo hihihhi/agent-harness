@@ -75,10 +75,22 @@ class Base(unittest.TestCase):
 
 class TestReview(Base):
     def gate(self, content):
-        f = self.tmp / "review.json"
+        """A findings file bound to a real change in a temp repo (a review is tied to the diff it read)."""
+        from agent_harness import review
+        repo = self.tmp / "gate-repo"
+        if not repo.exists():
+            git_repo(repo)
+            (repo / "a.py").write_text("x = 1\n")
+            subprocess.run(["git", "-C", str(repo), "add", "a.py"], check=True)
+        f = repo / "review.json"
         if content is not None:
+            if isinstance(content, dict) and "findings" in content:
+                content = dict(content, reviewed={"base": "HEAD",
+                                                   "diff_sha256": review.binding(repo, "HEAD", exclude=(str(f),))})
             f.write_text(content if isinstance(content, str) else json.dumps(content))
-        return harness(self.home, "review", "--gate", str(f))[0]
+        elif f.exists():
+            f.unlink()
+        return harness(self.home, "review", "--gate", str(f), cwd=repo)[0]
 
     def test_gate_passes_only_a_valid_file_with_no_must_fix(self):
         self.assertEqual(self.gate({"findings": []}), 0)
@@ -97,8 +109,8 @@ class TestReview(Base):
         stub(self.bin, "claude", 'printf "%s\\n" "$@" > "$STUB_ARGV"\n'
              'echo \'{"type":"result","is_error":false,"result":"done","structured_output":'
              '{"findings":[{"severity":"must-fix","file":"x.py","line":1,"summary":"bug","verified":true}]}}\'\n')
-        repo = self.tmp / "repo"
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        repo = git_repo(self.tmp / "repo")
+        (repo / "x.py").write_text("y = 1\n")          # something to review: an empty diff is refused
         out = self.tmp / "out.json"
         rc, text = harness(self.home, "review", "--run", "--out", str(out), env=self.env, cwd=repo)
         self.assertEqual(rc, 0, text)
@@ -106,7 +118,7 @@ class TestReview(Base):
         argv = self.argv.read_text().split("\n")
         self.assertIn("-p", argv)
         self.assertIn("--json-schema", argv)
-        self.assertNotEqual(harness(self.home, "review", "--gate", str(out))[0], 0)
+        self.assertNotEqual(harness(self.home, "review", "--gate", str(out), cwd=repo)[0], 0)
 
 
 # ---------------------------------------------------------------- G2 run
@@ -185,7 +197,9 @@ class TestDiscover(Base):
         self.assertEqual(order[0], "pg-tools@official", "the official, pinned item must rank first")
 
     def test_install_runs_only_the_exact_command_the_user_approved(self):
-        stub(self.bin, "claude", 'printf "%s\\n" "$@" > "$STUB_ARGV"\n')
+        # the stub reports the approved commit as installed (install is verified against it)
+        stub(self.bin, "claude", 'if [ "$1 $2" = "plugin list" ]; then echo \'{"installed": [{"id": '
+             '"pg-tools@official", "version": "0123456789ab"}]}\'; exit 0; fi\nprintf "%s\\n" "$@" > "$STUB_ARGV"\n')
         args = ("discover", "--install", "pg-tools@official", "--catalog", str(self.cat))
         rc, text = harness(self.home, *args, env=self.env)
         self.assertNotEqual(rc, 0, "installed without approval")
@@ -232,8 +246,10 @@ def tool_use(name, inp, uid):
 
 
 def tool_result(uid, payload):
+    # A Bash result is plain text in a real transcript; an MCP tool's (run_checks) is a JSON object.
+    content = payload if isinstance(payload, str) else json.dumps(payload)
     return {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": uid,
-                                                     "content": json.dumps(payload)}]}}
+                                                     "content": content}]}}
 
 
 class TestCapture(Base):
@@ -477,7 +493,8 @@ class TestTrend(Base):
         return f
 
     def check(self, rows):
-        return harness(self.home, "improve", "--trend", str(self.write(rows)))[0]
+        last = rows[-1]["version"] if rows else "0.0.0"
+        return harness(self.home, "improve", "--trend", str(self.write(rows)), "--release", last)[0]
 
     def test_a_regression_is_refused(self):
         rows = [{"version": "0.3.3", "tool": "claude-code", "pass": 17, "n": 18, "tokens": 1000},
@@ -563,7 +580,7 @@ class TestReviewFindings(Base):
         t = self.tmp / "t.jsonl"
         transcript(t, [user("fix it"),
                        tool_use("Bash", {"command": "ANTHROPIC_API_KEY=%s pytest -q" % key}, "a"),
-                       tool_result("a", "FAILED test_x token=%s\nExit code 1" % key),
+                       tool_result("a", "Exit code 1\nFAILED test_x token=%s" % key),
                        tool_use("Bash", {"command": "ANTHROPIC_API_KEY=%s pytest -q" % key}, "b"),
                        tool_result("b", "1 passed")])
         found = capture.candidates(str(t))
@@ -574,7 +591,7 @@ class TestReviewFindings(Base):
         from agent_harness import capture
         t = self.tmp / "t.jsonl"
         transcript(t, [user("fix it"),
-                       tool_use("Bash", {"command": "cd /repo && pytest -q"}, "a"), tool_result("a", "FAILED\nExit code 1"),
+                       tool_use("Bash", {"command": "cd /repo && pytest -q"}, "a"), tool_result("a", "Exit code 1\nFAILED"),
                        tool_use("Bash", {"command": "cd /repo && ruff check ."}, "b"), tool_result("b", "ok")])
         self.assertEqual(capture.candidates(str(t)), [])
 
@@ -603,7 +620,8 @@ class TestReviewFindings(Base):
 
     def test_an_item_found_by_a_search_can_be_installed(self):
         """install must find what search found (it rebuilt the catalogue with an empty search term)."""
-        stub(self.bin, "claude", 'printf "%s\\n" "$@" > "$STUB_ARGV"\n')
+        stub(self.bin, "claude", 'if [ "$1 $2" = "plugin list" ]; then echo \'{"installed": [{"id": '
+             '"pg-tools@official", "version": "0123456789ab"}]}\'; exit 0; fi\nprintf "%s\\n" "$@" > "$STUB_ARGV"\n')
         cat = self.tmp / "c.json"
         cat.write_text(json.dumps(CATALOG))
         from agent_harness import discover as D
@@ -648,7 +666,7 @@ class TestReviewFindings(Base):
         def check(rows):
             f = self.tmp / "history.jsonl"
             f.write_text("".join(json.dumps(x) + "\n" for x in rows))
-            return harness(self.home, "improve", "--trend", str(f))[0]
+            return harness(self.home, "improve", "--trend", str(f), "--release", rows[-1]["version"])[0]
         dup = [r("0.3", "claude-code", 17), r("0.4", "claude-code", 15), r("0.4", "claude-code", 15)]
         self.assertNotEqual(check(dup), 0, "a duplicated release hid a regression")
         missing = [r("0.3", "claude-code", 17), r("0.3", "codex", 16), r("0.4", "claude-code", 17)]
@@ -684,7 +702,7 @@ class TestReReview(Base):
 
     def turn(self):
         return [user("fix the parser"),
-                tool_use("Bash", {"command": "pytest -q"}, "a"), tool_result("a", "FAILED t\nExit code 1"),
+                tool_use("Bash", {"command": "pytest -q"}, "a"), tool_result("a", "Exit code 1\nFAILED t"),
                 tool_use("Bash", {"command": "pytest -q"}, "b"), tool_result("b", "1 passed")]
 
     def stop(self, path, active=False):
@@ -735,7 +753,7 @@ class TestReReview(Base):
         tok = "ghp_" + "K" * 36
         cmd = "x" * 90 + " " + tok + " pytest -q"   # a cut at 120 leaves ghp_ + 25 chars: under the pattern
         t = self.tmp / "t.jsonl"
-        transcript(t, [user("go"), tool_use("Bash", {"command": cmd}, "a"), tool_result("a", "FAILED\nExit code 1"),
+        transcript(t, [user("go"), tool_use("Bash", {"command": cmd}, "a"), tool_result("a", "Exit code 1\nFAILED"),
                        tool_use("Bash", {"command": cmd}, "b"), tool_result("b", "ok")])
         self.assertNotIn("K" * 20, json.dumps(capture.candidates(str(t))))
 
@@ -743,7 +761,7 @@ class TestReReview(Base):
         def check(rows):
             f = self.tmp / "h.jsonl"
             f.write_text("".join(json.dumps(x) + "\n" for x in rows))
-            return harness(self.home, "improve", "--trend", str(f))[0]
+            return harness(self.home, "improve", "--trend", str(f), "--release", rows[-1]["version"])[0]
         same = [{"version": "0.3", "tool": "codex", "pass": 17, "n": 18, "tokens": 1000},
                 {"version": "0.4", "tool": "codex", "pass": 17, "n": 18}]
         self.assertNotEqual(check(same), 0, "equal passes with no token count passed")
@@ -768,6 +786,176 @@ class TestCaptureOnlyHook(Base):
     def test_a_broken_payload_is_still_exit_0(self):
         with mock.patch("sys.stdout", io.StringIO()):
             self.assertEqual(cli.capture_hook(io.StringIO("not json")), 0)
+
+
+def git_repo(path: Path) -> Path:
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    subprocess.run(["git", "-C", str(path), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q",
+                    "--allow-empty", "-m", "init"], check=True)
+    return path
+
+
+class TestV041(Base):
+    """The GitHub-portfolio session's review of v0.4.0 (review/code-review/agent-harness-v0.4.0.md), one test per
+    finding, each failing before its fix."""
+
+    # 1 discover: a plugin is pinned only by a commit SHA, and what got installed is checked against it
+    def test_a_plugin_pinned_only_by_version_is_not_pinned(self):
+        from agent_harness import discover as D
+        codex = {"kind": "plugin", "tool": "codex", "id": "x", "name": "x", "description": "x", "tier": "official",
+                 "ref": "1.0.0", "components": ["skill"], "install": ["codex", "plugin", "add", "x"]}
+        self.assertEqual(D.vet(codex)[0], "block")
+        mcp = dict(CATALOG[1], ref="1.2.3", install=["claude", "mcp", "add", "pg", "--", "npx", "-y", "pg@1.2.3"])
+        self.assertNotEqual(D.vet(mcp)[0], "block", "an npm package at an exact version is immutable")
+
+    def install_with_listed_version(self, listed):
+        listing = json.dumps({"installed": [{"id": "pg-tools@official", "version": listed}], "available": []})
+        stub(self.bin, "claude", 'echo "$@" >> "$STUB_ARGV"\n'
+             'if [ "$1 $2" = "plugin list" ]; then echo \'%s\'; fi\n' % listing)
+        cat = self.tmp / "c.json"
+        cat.write_text(json.dumps(CATALOG))
+        from agent_harness import discover as D
+        rec = next(r for r in D.search("postgres", str(cat), hh=self.hh()) if r["id"] == "pg-tools@official")
+        return harness(self.home, "discover", "--install", rec["id"], "--approve", rec["approve"],
+                       "--catalog", str(cat), env=self.env)
+
+    def test_an_install_that_is_not_the_approved_commit_is_removed(self):
+        rc, text = self.install_with_listed_version("ffffffffffff")
+        self.assertNotEqual(rc, 0, text)
+        self.assertIn("plugin uninstall pg-tools@official", self.argv.read_text())
+        self.assertFalse((self.hh() / "installed-extensions.jsonl").exists())
+
+    def test_the_approved_commit_installed_is_recorded(self):
+        rc, text = self.install_with_listed_version(CATALOG[0]["ref"][:12])
+        self.assertEqual(rc, 0, text)
+
+    # 2 review: the gate is tied to the diff that was reviewed
+    def reviewed_repo(self):
+        repo = git_repo(self.tmp / "repo")
+        (repo / "a.py").write_text("x = 1\n")
+        subprocess.run(["git", "-C", str(repo), "add", "a.py"], check=True)
+        stub(self.bin, "claude", 'echo \'{"type":"result","is_error":false,"structured_output":{"findings":[]}}\'\n')
+        out = repo / "review.json"
+        rc, text = harness(self.home, "review", "--run", "--out", str(out), env=self.env, cwd=repo)
+        self.assertEqual(rc, 0, text)
+        return repo, out
+
+    def test_a_review_passes_only_for_the_code_it_reviewed(self):
+        repo, out = self.reviewed_repo()
+        self.assertEqual(harness(self.home, "review", "--gate", str(out), cwd=repo)[0], 0)
+        (repo / "a.py").write_text("x = 2\n")
+        self.assertNotEqual(harness(self.home, "review", "--gate", str(out), cwd=repo)[0], 0,
+                            "the code changed after the review and the gate still passed")
+
+    def test_a_hand_written_empty_review_is_not_a_review(self):
+        repo = git_repo(self.tmp / "repo2")
+        f = repo / "r.json"
+        f.write_text(json.dumps({"findings": []}))
+        self.assertNotEqual(harness(self.home, "review", "--gate", str(f), cwd=repo)[0], 0)
+
+    def test_an_empty_diff_is_refused_rather_than_reviewed_as_clean(self):
+        repo = git_repo(self.tmp / "repo3")
+        stub(self.bin, "claude", 'echo \'{"type":"result","is_error":false,"structured_output":{"findings":[]}}\'\n')
+        rc, text = harness(self.home, "review", "--run", "--out", str(repo / "r.json"), env=self.env, cwd=repo)
+        self.assertNotEqual(rc, 0, text)
+
+    # 3 capture: a failing prune can never make one occurrence count twice
+    def test_a_failing_prune_does_not_double_count(self):
+        self.hh().mkdir(parents=True, exist_ok=True)
+        (self.hh() / "installed-extensions.jsonl").write_bytes(b"\xff\xfe not utf-8\n")
+        t = self.tmp / "t.jsonl"
+        transcript(t, TestReReview.turn(self))
+        TestReReview.stop(self, t)
+        TestReReview.stop(self, t, active=True)
+        rows = [json.loads(x) for x in (self.hh() / "candidates.jsonl").read_text().splitlines()]
+        self.assertEqual([r["count"] for r in rows], [1])
+
+    # 4 storage: an applied proposal is never pruned (it is the record that it was applied)
+    def test_an_applied_proposal_survives_pruning(self):
+        from agent_harness import storage
+        TestImprove.seed(self, 3)
+        pid = json.loads(harness(self.home, "improve", "--propose", "--json")[1])[0]["id"]
+        f = self.tmp / "e.json"
+        f.write_text(json.dumps({"proposal": pid, "base": {"pass": 1, "n": 4, "tokens": 100},
+                                 "cand": {"pass": 3, "n": 4, "tokens": 100}}))
+        self.assertEqual(harness(self.home, "improve", "--apply", pid, "--eval", str(f))[0], 0)
+        for i in range(storage.CAPS["proposals"] + 5):
+            (self.hh() / "proposals" / ("p%d.json" % i)).write_text(json.dumps({"id": "p%d" % i, "status": "proposed"}))
+        storage.prune(self.hh())
+        self.assertTrue((self.hh() / "proposals" / ("%s.json" % pid)).is_file())
+        again = [p["id"] for p in json.loads(harness(self.home, "improve", "--propose", "--json")[1])]
+        self.assertNotIn(pid, again, "an applied lesson was proposed again")
+
+    # 5 trend: the default release is this version
+    def test_trend_judges_this_version_by_default(self):
+        from agent_harness import __version__
+        f = self.tmp / "h.jsonl"
+        f.write_text(json.dumps({"version": "0.0.1", "tool": "codex", "pass": 1, "n": 2}) + "\n"
+                     + json.dumps({"version": "0.0.2", "tool": "codex", "pass": 2, "n": 2}) + "\n")
+        rc, text = harness(self.home, "improve", "--trend", str(f))
+        self.assertNotEqual(rc, 0, "a release with no measured result (%s) passed: %s" % (__version__, text))
+
+    # 6 keep rule: NaN tokens and impossible scores are refused; numeric strings do not crash trend
+    def test_keep_rule_refuses_nan_and_impossible_scores(self):
+        from agent_harness import improve
+        nan = float("nan")
+        self.assertFalse(improve.keep_rule({"base": {"pass": 1, "n": 2, "tokens": nan},
+                                            "cand": {"pass": 2, "n": 2, "tokens": nan}})[0])
+        self.assertFalse(improve.keep_rule({"base": {"pass": 1, "n": 10, "tokens": 10},
+                                            "cand": {"pass": 50, "n": 10, "tokens": 10}})[0])
+
+    def test_trend_takes_numeric_strings(self):
+        f = self.tmp / "h.jsonl"
+        f.write_text(json.dumps({"version": "a", "tool": "codex", "pass": "5", "n": "10", "tokens": "100"}) + "\n"
+                     + json.dumps({"version": "b", "tool": "codex", "pass": "6", "n": "10", "tokens": "100"}) + "\n")
+        self.assertEqual(harness(self.home, "improve", "--trend", str(f), "--release", "b")[0], 0)
+
+    # 7 secret-scan: an allowed substring excuses only itself
+    def test_an_allowed_path_does_not_excuse_the_rest_of_the_line(self):
+        for line in ("cp /Users/Shared/a /Users/realname/b",   # secret-scan: allow
+                     "curl https://example.com/x -o /Users/realname/tmp/x",   # secret-scan: allow
+                     "mail realname@gmail.com, docs at example.com",   # secret-scan: allow
+                     "ssh 10.0.0.5 # see /home/user/ notes",   # secret-scan: allow
+                     "cd /users/realname/x"):   # secret-scan: allow
+            self.assertNotEqual(TestReviewItems.scan(self, line), 0, line)
+        self.assertEqual(TestReviewItems.scan(self, "cp /Users/Shared/a /Users/me/b"), 0)
+
+    # 8 capture: only a real check is a gate signal
+    def test_a_grep_for_the_word_pytest_is_not_a_check(self):
+        from agent_harness import capture
+        t = self.tmp / "t.jsonl"
+        transcript(t, [user("go"), tool_use("Bash", {"command": "grep -rn pytest docs/"}, "a"),
+                       tool_result("a", "Exit code 1"), tool_use("Bash", {"command": "grep -rn pytest docs/"}, "b"),
+                       tool_result("b", "docs/x.md:1: pytest")])
+        self.assertEqual(capture.candidates(str(t)), [])
+
+    def test_exit_code_text_inside_passing_output_is_not_a_failure(self):
+        from agent_harness import capture
+        t = self.tmp / "t.jsonl"
+        transcript(t, [user("go"), tool_use("Bash", {"command": "cd /r && pytest -q"}, "a"),
+                       tool_result("a", "test_x passed; the child process exited with code 1 as expected"),
+                       tool_use("Bash", {"command": "cd /r && pytest -q"}, "b"), tool_result("b", "1 passed")])
+        self.assertEqual(capture.candidates(str(t)), [])
+
+    # 9 run: progress streams while the drain runs (not only at the end)
+    def test_run_streams_the_engines_output(self):
+        src = (ROOT / "src" / "agent_harness" / "cli.py").read_text()
+        body = src[src.index("def cmd_run"):src.index("\ndef ", src.index("def cmd_run") + 5)]
+        self.assertNotIn("capture_output=True", body, "harness run buffers the whole drain's output")
+
+    # 10 a skip anywhere in the suite must be an environmental one
+    def test_every_skip_in_the_suite_is_environmental(self):
+        allowed = ("tomllib", "HARNESS_LIVE", "root reads", "no git history", "no release tag")
+        bad = []
+        for f in (ROOT / "tests").glob("test_*.py"):
+            lines = f.read_text().splitlines()
+            for n, line in enumerate(lines, 1):
+                if re.search(r"skipTest\(|pytest\.skip\(|SkipTest\(|skipIf\(|skipUnless\(", line) \
+                        and "allowed = (" not in line and "re.search(" not in line:
+                    ctx = " ".join(lines[n - 1:n + 1])
+                    if not any(a in ctx for a in allowed):
+                        bad.append("%s:%d" % (f.name, n))
+        self.assertEqual(bad, [])
 
 
 if __name__ == "__main__":
