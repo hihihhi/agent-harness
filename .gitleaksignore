@@ -1,0 +1,3 @@
+# Deliberate fake secrets: fixtures for tests/test_redact.py, which checks that redaction removes them.
+737966b2a69f02821724fffe1d088614944f839c:tests/test_redact.py:generic-api-key:60
+b482b219a346d25bf33818f1399a6d9e58e52385:tests/test_redact.py:generic-api-key:52

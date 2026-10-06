@@ -73,7 +73,7 @@ if git rev-parse --git-dir >/dev/null 2>&1 && git rev-parse HEAD >/dev/null 2>&1
 fi
 
 if command -v gitleaks >/dev/null 2>&1; then
-  gitleaks detect --no-banner --redact -q . || fail=1
+  gitleaks detect --no-banner --redact --log-level warn -s . || fail=1   # gitleaks 8.30 has no -q
 fi
 
 [ $fail = 0 ] && echo "SECRET-SCAN: PASS" || echo "SECRET-SCAN: FAIL (see lines above)"
