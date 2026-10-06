@@ -15,6 +15,16 @@ extra_rules = "rules.md"
 # and pointed to from the rules.
 descriptor = "SERVER.md"
 
+# A skill folder here (skills/<name>/SKILL.md) takes the place of the harness skill of that name, or adds one.
+
+# Keep Claude Code's own memory folders instead of pointing Claude at the harness memory
+# (then add them to kb_paths, globs allowed: "~/.claude/projects/*/memory").
+# claude_memory = "keep"
+
+# Keep this machine on the newest release whose checks all passed (`harness self-update`, at most daily).
+# update_repo = "oscar-chw/agent-harness"
+# auto_update = true
+
 [warmup]
 # Optional MCP plugins that `harness warmup` installs and registers. est_mb is the
 # expected disk use, shown before anything is downloaded.
