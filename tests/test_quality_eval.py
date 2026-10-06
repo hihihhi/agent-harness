@@ -166,6 +166,36 @@ class TestInstrument(unittest.TestCase):
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
+    def test_instrument_adequacy_does_not_count_tests_pinned_to_other_wording(self):
+        """Baseline: codex Q11 tests asserted its own log text ('Failed to process item 2'); the reference words it
+        differently. That test is left out as evidence; the strong rest of the suite still decides."""
+        t = self._q("Q11")
+        f = t["tests"][0]
+        pinned = t["good"][f] + (
+            "\n\ndef test_exact_wording(caplog):\n"
+            "    def handle(item):\n        raise RuntimeError('x')\n"
+            "    with caplog.at_level(logging.ERROR, logger='batch'):\n"
+            "        process_batch([{'id': 2}], handle)\n"
+            "    assert [r.getMessage() for r in caplog.records] == ['Failed to process item 2']\n")
+        d = _work(t, {**t["good"], f: pinned})
+        try:
+            g = G.grade(t, d)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        self.assertTrue(g["adequacy"], g["details"]["adequacy"])
+        self.assertIn("left out", g["details"]["adequacy"])
+
+    def test_instrument_adequacy_fails_when_no_test_passes_on_the_reference(self):
+        t = self._q("Q11")
+        f = t["tests"][0]
+        d = _work(t, {**t["good"], f: "def test_wrong():\n    assert 1 == 2\n"})
+        try:
+            g = G.grade(t, d)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        self.assertFalse(g["adequacy"])
+        self.assertIn("no test passes", g["details"]["adequacy"])
+
     def test_instrument_graders_never_use_a_stale_bytecode_cache(self):
         """Found re-grading the baseline: a same-length mutant written in the same second as the reference ran from
         the reference's .pyc and survived, so adequacy verdicts flipped between gradings of the same tree."""

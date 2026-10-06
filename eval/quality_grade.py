@@ -83,8 +83,26 @@ def g_hidden(task, work):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _outcomes(cwd):
+    """{test id: passed?} for the tests under tests/, from pytest's JUnit XML (no -x: every test runs)."""
+    xml = Path(cwd) / "_junit.xml"
+    rc, out = _run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--junitxml", str(xml), "tests"],
+                   cwd)
+    if not xml.is_file():
+        return None, out.strip().splitlines()[-1:]
+    import xml.etree.ElementTree as ET
+    res = {}
+    for case in ET.parse(str(xml)).iter("testcase"):
+        bad = any(child.tag in ("failure", "error") for child in case)
+        res["%s::%s" % (case.get("classname"), case.get("name"))] = not bad and not any(c.tag == "skipped" for c in case)
+    return res, None
+
+
 def g_adequacy(task, work):
-    """The agent's tests must pass on the reference implementation and fail on every hidden mutant of it."""
+    """Differential mutation score: a mutant of the known-good reference is killed when some agent test that PASSES
+    on the reference FAILS on the mutant. Tests that fail on the reference (exact log wording, a stricter reading
+    of an underspecified edge) are left out as evidence, not counted against the agent; at least one test must
+    pass on the reference, and every mutant must be killed."""
     tests = sorted(p.relative_to(work).as_posix() for p in Path(work).glob("tests/**/test_*.py"))
     if not tests:
         return False, "no test files under tests/"
@@ -92,19 +110,25 @@ def g_adequacy(task, work):
     tmp, w = _copy(work)
     try:
         (w / task["impl"]).write_text(ref, encoding="utf-8")
-        rc, out = _pytest(w, "tests")
-        if rc != 0:
-            return False, "the tests fail on a correct implementation: %s" % out.strip().splitlines()[-1:]
+        base, err = _outcomes(w)
+        if base is None:
+            return False, "the tests could not run on a correct implementation: %s" % err
+        good = {k for k, v in base.items() if v}
+        if not good:
+            return False, "no test passes on a correct implementation"
         survived = []
         for find, repl in task["mutants"]:
             if find not in ref:
                 return False, "instrument error: mutant %r not in the reference" % find
             (w / task["impl"]).write_text(ref.replace(find, repl, 1), encoding="utf-8")
-            if _pytest(w, "tests")[0] == 0:
+            res, _ = _outcomes(w)
+            if res is not None and all(res.get(k, False) for k in good):
                 survived.append(find)
+        off = len(base) - len(good)
+        note = " (%d test(s) fail on the reference and were left out)" % off if off else ""
         if survived:
-            return False, "%d of %d mutants survived: %s" % (len(survived), len(task["mutants"]), survived)
-        return True, "killed %d mutants" % len(task["mutants"])
+            return False, "%d of %d mutants survived: %s%s" % (len(survived), len(task["mutants"]), survived, note)
+        return True, "killed %d mutants%s" % (len(task["mutants"]), note)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

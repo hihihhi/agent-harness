@@ -1001,7 +1001,7 @@ TASKS = [
                     except FileNotFoundError:
                         log.error("settings file not found: %s", path)
                         raise FileNotFoundError("settings file not found: %s" % path) from None
-                    except json.JSONDecodeError as e:
+                    except (json.JSONDecodeError, UnicodeDecodeError) as e:
                         log.error("settings file %s is not valid JSON: %s", path, e)
                         raise ValueError("settings file %s is not valid JSON: %s" % (path, e)) from e
                     if not isinstance(data, dict):
@@ -1043,7 +1043,7 @@ TASKS = [
         },
         "mutants": [("if not isinstance(data, dict):", "if False:"),
                     ('log.error("settings file not found: %s", path)', "pass"),
-                    ("except json.JSONDecodeError as e:", "except OSError as e:")],
+                    ("except (json.JSONDecodeError, UnicodeDecodeError) as e:", "except OSError as e:")],
         "hidden": _d('''
             import logging
 
