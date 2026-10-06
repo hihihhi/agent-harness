@@ -1032,10 +1032,11 @@ class TestV041b(Base):
                   "pytest --version", "ruff format ."):
             self.assertFalse(is_check(c), c)
 
-    def test_run_does_not_send_a_second_interrupt(self):
+    def test_run_forwards_one_interrupt_to_an_engine_in_its_own_session(self):
         src = (ROOT / "src" / "agent_harness" / "cli.py").read_text()
         body = src[src.index("def cmd_run"):src.index("\ndef ", src.index("def cmd_run") + 5)]
-        self.assertNotIn("send_signal(signal.SIGINT)", body)
+        self.assertIn("start_new_session=True", body)
+        self.assertEqual(body.count("send_signal(signal.SIGINT)"), 1)
         self.assertIn("PYTHONUNBUFFERED", body)
 
     def test_every_skip_names_an_environmental_reason(self):
@@ -1068,6 +1069,44 @@ class TestV041b(Base):
                         and re.match(r"\s*(return|pass)\b", lines[n]):
                     bad.append("%s:%d except ImportError: %s" % (f.name, n, lines[n].strip()))
         self.assertEqual(bad, [])
+
+class TestV041c(Base):
+    """The third verification round (N1-N6), each a test that failed before its fix."""
+
+    def reviewed(self):
+        return TestV041b.bound(self)
+
+    def test_any_file_added_after_the_review_fails_the_gate(self):
+        for name in ("Makefile", "Dockerfile", "evil.pth", "bin/deploy"):
+            repo, out = self.reviewed()
+            (repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (repo / name).write_text("x\n")
+            self.assertNotEqual(harness(self.home, "review", "--gate", str(out), cwd=repo)[0], 0, name)
+            import shutil as _sh
+            _sh.rmtree(repo)
+
+    def test_a_mode_change_after_the_review_fails_the_gate(self):
+        repo, out = self.reviewed()
+        os.chmod(repo / "a.py", 0o755)
+        self.assertNotEqual(harness(self.home, "review", "--gate", str(out), cwd=repo)[0], 0)
+
+    def test_the_detector_on_the_third_rounds_shapes(self):
+        from agent_harness.capture import is_check
+        for c in ("(cd sub && pytest)", "npm run test:unit", "pnpm test:ci", "yarn test:e2e", "ruff src/",
+                  "python -u -m pytest", "nice -n 10 pytest", "timeout -s KILL 60 pytest", "uv run --with pytest pytest"):
+            self.assertTrue(is_check(c), c)
+        for c in ("npm install test", "python script.py"):
+            self.assertFalse(is_check(c), c)
+
+    def test_an_override_install_with_no_pin_records_what_was_installed(self):
+        from agent_harness import discover as D
+        rec = {"tool": "claude-code", "kind": "plugin", "id": "x@m", "ref": None}
+        with mock.patch.object(D, "_json", return_value=[{"id": "x@m", "version": "abcdef123456", "scope": "project"}]):
+            ok, why = D.verify_installed(rec)
+        self.assertTrue(ok)
+        self.assertIn("not verified", why)
+        self.assertEqual(rec["installed"], "abcdef123456")
+
 
 if __name__ == "__main__":
     unittest.main()

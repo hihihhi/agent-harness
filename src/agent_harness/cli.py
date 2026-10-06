@@ -663,15 +663,17 @@ def cmd_run(args) -> int:
     # what the person watching needs while it runs, not after; Ctrl-C reaches the engine as SIGINT.
     p = subprocess.Popen([str(engine), "run", args.slug, "--workers", str(max(1, args.workers))],
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-                         env=dict(os.environ, PYTHONUNBUFFERED="1"))
+                         env=dict(os.environ, PYTHONUNBUFFERED="1"), start_new_session=True)
     try:
         for line in p.stdout:
             _out(line.rstrip("\n"))
         return p.wait()
     except KeyboardInterrupt:
-        # The terminal's Ctrl-C already reached the engine (same process group). A second SIGINT would land in
-        # its cleanup and leave claimed nodes leased for hours, so: ignore further ones and let it finish.
+        # The engine runs in its own session, so an interrupt reaches it only through here, exactly once,
+        # whether it came from a terminal Ctrl-C or a SIGINT sent to this process alone; a second one would
+        # land in its cleanup and leave claimed nodes leased for hours, so further ones are ignored.
         signal.signal(signal.SIGINT, signal.SIG_IGN)
+        p.send_signal(signal.SIGINT)
         for line in p.stdout:
             _out(line.rstrip("\n"))
         p.wait()

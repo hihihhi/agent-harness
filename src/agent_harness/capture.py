@@ -25,16 +25,19 @@ STORE = "candidates.jsonl"
 # pytest docs/` names pytest and is not one. Parsed with shlex, so text in quotes or a heredoc is never a step;
 # wrappers are skipped (VAR=1, env, time, timeout N, nice, sudo -u X, xvfb-run, uv/poetry/pdm/hatch run, npx,
 # any python[3[.x]] -m, a venv's or /usr/bin's python); --version/--help is not a check run.
-WRAPPERS = {"env", "time", "nice", "nohup", "xvfb-run", "npx", "command", "exec"}
-VALUE_FLAGS = {"timeout": 1, "nice": 0, "sudo": 0}
+WRAPPERS = {"env", "time", "nohup", "xvfb-run", "npx", "command", "exec"}
+# Wrappers whose own options come before the wrapped command: {name: options that take a value}.
+OPT_WRAPPERS = {"nice": {"-n"}, "timeout": {"-s", "-k", "--signal", "--kill-after"}, "sudo": {"-u", "-g"},
+                "ionice": {"-c", "-n"}}
 RUNNERS = {"pytest", "py.test", "unittest", "mypy", "tsc", "phase-check", "phase-check.py"}
+RUFF_SUBCOMMANDS = {"format", "version", "rule", "config", "linter", "clean", "server", "analyze", "help"}
 HEREDOC_BODY = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n.*?\n\s*\1\s*(\n|$)", re.S)
 
 
 def _steps(cmd: str) -> List[List[str]]:
     import shlex
     cmd = HEREDOC_BODY.sub("\n", cmd)
-    lex = shlex.shlex(cmd.replace("\n", " ; "), posix=True, punctuation_chars=";&|")
+    lex = shlex.shlex(cmd.replace("\n", " ; "), posix=True, punctuation_chars=";&|()")
     lex.whitespace_split = True
     try:
         toks = list(lex)
@@ -42,13 +45,19 @@ def _steps(cmd: str) -> List[List[str]]:
         return []
     out, cur = [], []
     for t in toks:
-        if t and set(t) <= set(";&|"):
+        if t and set(t) <= set(";&|()"):        # a subshell's parentheses separate steps like ; does
             out.append(cur)
             cur = []
         else:
             cur.append(t)
     out.append(cur)
     return [x for x in out if x]
+
+
+def _skip_opts(w: List[str], i: int, valued) -> int:
+    while i < len(w) and w[i].startswith("-"):
+        i += 2 if w[i] in valued else 1
+    return i
 
 
 def _is_check_step(w: List[str]) -> bool:
@@ -58,14 +67,20 @@ def _is_check_step(w: List[str]) -> bool:
         b = t.rsplit("/", 1)[-1]
         if re.match(r"^[A-Za-z_]\w*=", t) or b in WRAPPERS:
             i += 1
-        elif b == "timeout":
-            i += 2
-        elif b == "sudo":
-            i += 3 if i + 1 < len(w) and w[i + 1] == "-u" else 1
+        elif b in OPT_WRAPPERS:
+            i = _skip_opts(w, i + 1, OPT_WRAPPERS[b])
+            if b == "timeout" and i < len(w):
+                i += 1                                   # the duration
         elif b in ("uv", "poetry", "pdm", "hatch") and i + 1 < len(w) and w[i + 1] == "run":
-            i += 2
-        elif re.match(r"^python[\d.]*$", b) and i + 2 < len(w) and w[i + 1] == "-m":
-            w, i = [w[i + 2]] + w[i + 3:], 0
+            i = _skip_opts(w, i + 2, {"--with", "--python", "-p", "--project", "--directory", "--env-file"})
+        elif re.match(r"^python[\d.]*$", b):
+            j = i + 1                                    # python's own flags (-u, -X dev, ...) before -m
+            while j < len(w) and w[j].startswith("-") and w[j] != "-m":
+                j += 2 if w[j] in ("-X", "-W") else 1
+            if j + 1 < len(w) and w[j] == "-m":
+                w, i = [w[j + 1]] + w[j + 2:], 0
+            else:
+                return False                             # python <script>: not a known check
         else:
             break
     if i >= len(w):
@@ -76,11 +91,12 @@ def _is_check_step(w: List[str]) -> bool:
     if prog in RUNNERS:
         return True
     if prog == "ruff":
-        return bool(rest) and rest[0] == "check"
+        return not rest or rest[0] == "check" or (rest[0] not in RUFF_SUBCOMMANDS)   # `ruff src/` is a check
     if prog in ("go", "cargo"):
         return bool(rest) and rest[0] == "test"
     if prog in ("npm", "yarn", "pnpm"):
-        return "test" in rest[:2]
+        script = rest[1] if rest[:1] == ["run"] and len(rest) > 1 else (rest[0] if rest else "")
+        return script == "test" or script.startswith("test:")      # not `npm install test`
     if prog == "make":
         return any(t in ("test", "check") for t in rest)
     if prog in ("plan", "plan.py"):

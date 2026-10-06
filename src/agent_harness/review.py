@@ -49,11 +49,6 @@ Answer with the JSON object only: {{"findings": [...]}}. An empty list means you
 """
 
 
-# Untracked files that appear after a review and look like source fail the gate (unreviewed code); anything
-# else that appears (.coverage, .hypothesis/, build output the reviewer's own test run left) does not.
-SOURCE_EXT = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".kt", ".rb", ".php",
-              ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".swift", ".sh", ".bash", ".zsh", ".sql", ".toml",
-              ".yaml", ".yml", ".tf", ".lua", ".pl", ".r", ".scala", ".vue", ".svelte"}
 
 
 def resolve_base(root: Path, base: str) -> Optional[str]:
@@ -111,7 +106,9 @@ def snapshot(root: Path, sha: str, exclude: Tuple[str, ...] = (), untracked: Opt
     for rel in changed:
         h.update(b"\0" + rel.encode() + b"\0")
         try:
-            h.update((root / rel).read_bytes())
+            p = root / rel
+            h.update(b"x" if os.access(p, os.X_OK) else b"-")     # a mode change is a change (chmod +x)
+            h.update(p.read_bytes())
         except OSError:
             h.update(b"\0deleted")
     return h.hexdigest(), untracked
@@ -140,10 +137,14 @@ def gate(path: str, root: Optional[Path] = None) -> Tuple[int, str]:
     now, _ = snapshot(root, sha, exclude=(path,), untracked=[str(x) for x in rv["untracked"]])
     if now != rv["diff_sha256"]:
         return 1, "review: the code changed since %s was reviewed (against %s); review it again" % (path, sha[:12])
-    new = [x for x in (_untracked(root, {str(Path(path).resolve())}) or []) if x not in rv["untracked"]
-           and Path(x).suffix.lower() in SOURCE_EXT]
+    # Every untracked file that appeared since the review fails it, whatever its name (a Makefile, a
+    # postinstall in package.json, a .pth file run at start-up are code), except what the reviewer itself
+    # left behind while it ran (recorded as artefacts). Ignore anything else in .gitignore, or review again.
+    seen = set(rv["untracked"]) | set(str(x) for x in rv.get("artefacts") or [])
+    new = [x for x in (_untracked(root, {str(Path(path).resolve())}) or []) if x not in seen]
     if new:
-        return 1, "review: source files added since the review were never reviewed: %s" % ", ".join(new[:5])
+        return 1, "review: files added since the review were never reviewed: %s (review again, or .gitignore " \
+                  "them if they are build output)" % ", ".join(new[:5])
     must = [f for f in found if f["severity"] == "must-fix"]
     if must:
         lines = ["  %s:%s %s" % (f.get("file", "?"), f.get("line", "?"), f.get("summary", "")) for f in must]
@@ -249,7 +250,9 @@ def run(base: Optional[str], out: str, home: Path, timeout: int = 1800, root: Op
     if not isinstance(found, dict) or not isinstance(found.get("findings"), list):
         return 2, "review: the reviewer returned no findings object (exit %s): %s" % (
             p.returncode, (p.stdout or p.stderr)[-300:])
-    found["reviewed"] = {"base": sha, "untracked": untracked, "diff_sha256": bound}
+    after = _untracked(root, {str(Path(out).resolve())}) or []
+    found["reviewed"] = {"base": sha, "untracked": untracked, "diff_sha256": bound,
+                         "artefacts": [x for x in after if x not in untracked]}   # what the reviewer's run left
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(json.dumps(found, indent=1) + "\n", encoding="utf-8")
     n = len(found["findings"])

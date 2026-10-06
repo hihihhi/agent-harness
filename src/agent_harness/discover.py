@@ -246,7 +246,8 @@ def install(rec_id: str, approve: Optional[str], override: bool, hh: Path, catal
     if not ok:
         return 1, "discover: %s. %s" % (why, rollback(rec))
     hh.mkdir(parents=True, exist_ok=True)
-    entry = {"id": rec_id, "ref": rec.get("ref"), "approved": digest, "command": cmd, "verdict": verdict,
+    entry = {"id": rec_id, "ref": rec.get("ref"), "installed": rec.get("installed"), "approved": digest,
+             "command": cmd, "verdict": verdict,
              "override": bool(override), "when": time.strftime("%Y-%m-%dT%H:%M:%S")}
     with open(hh / LEDGER, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
@@ -263,6 +264,9 @@ def verify_installed(rec: dict) -> Tuple[bool, str]:
     got = next((str(p.get("version") or "") for p in rows if isinstance(p, dict) and p.get("id") == rec.get("id")
                 and p.get("scope") == "project"), None)    # the copy this install made, not a user-scope one
     want = str(rec.get("ref") or "").lower()
+    if not SHA.match(want):           # only reachable with --override: nothing to compare against, so say so
+        rec["installed"] = got
+        return True, "not verified: no pinned commit was approved (installed %s)" % (got or "unknown")
     if not got:
         return False, "could not read back which commit of %s was installed" % rec.get("id")
     g = got.lower()
