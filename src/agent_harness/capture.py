@@ -21,18 +21,81 @@ from typing import List, Optional
 from .redact import redact
 
 STORE = "candidates.jsonl"
-# A check is a command whose PROGRAM is a test runner or linter, in any `&&`/`;` step: `grep -rn pytest docs/`
-# names pytest and is not one. Wrappers (env assignments, python -m, uv run, npx, a venv's bin/) are skipped.
-CHECK_STEP = re.compile(r"^\s*(?:\w+=\S*\s+)*(?:(?:uv|poetry|pdm|hatch) run\s+|npx\s+|python3?(?:\.\d+)? -m\s+)?"
-                        r"(?:\S*/)?(pytest|unittest|ruff|mypy|tsc|phase-check(?:\.py)?|npm (?:run )?test|yarn test"
-                        r"|pnpm test|make (?:test|check)|go test|cargo test|plan(?:\.py)? gate)\b")
+# A check is a command whose PROGRAM is a test runner or linter, in any step of the command line: `grep -rn
+# pytest docs/` names pytest and is not one. Parsed with shlex, so text in quotes or a heredoc is never a step;
+# wrappers are skipped (VAR=1, env, time, timeout N, nice, sudo -u X, xvfb-run, uv/poetry/pdm/hatch run, npx,
+# any python[3[.x]] -m, a venv's or /usr/bin's python); --version/--help is not a check run.
+WRAPPERS = {"env", "time", "nice", "nohup", "xvfb-run", "npx", "command", "exec"}
+VALUE_FLAGS = {"timeout": 1, "nice": 0, "sudo": 0}
+RUNNERS = {"pytest", "py.test", "unittest", "mypy", "tsc", "phase-check", "phase-check.py"}
+HEREDOC_BODY = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n.*?\n\s*\1\s*(\n|$)", re.S)
+
+
+def _steps(cmd: str) -> List[List[str]]:
+    import shlex
+    cmd = HEREDOC_BODY.sub("\n", cmd)
+    lex = shlex.shlex(cmd.replace("\n", " ; "), posix=True, punctuation_chars=";&|")
+    lex.whitespace_split = True
+    try:
+        toks = list(lex)
+    except ValueError:
+        return []
+    out, cur = [], []
+    for t in toks:
+        if t and set(t) <= set(";&|"):
+            out.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    out.append(cur)
+    return [x for x in out if x]
+
+
+def _is_check_step(w: List[str]) -> bool:
+    i = 0
+    while i < len(w):
+        t = w[i]
+        b = t.rsplit("/", 1)[-1]
+        if re.match(r"^[A-Za-z_]\w*=", t) or b in WRAPPERS:
+            i += 1
+        elif b == "timeout":
+            i += 2
+        elif b == "sudo":
+            i += 3 if i + 1 < len(w) and w[i + 1] == "-u" else 1
+        elif b in ("uv", "poetry", "pdm", "hatch") and i + 1 < len(w) and w[i + 1] == "run":
+            i += 2
+        elif re.match(r"^python[\d.]*$", b) and i + 2 < len(w) and w[i + 1] == "-m":
+            w, i = [w[i + 2]] + w[i + 3:], 0
+        else:
+            break
+    if i >= len(w):
+        return False
+    prog, rest = w[i].rsplit("/", 1)[-1], w[i + 1:]
+    if any(a in ("--version", "--help", "-h", "-V") for a in rest):
+        return False
+    if prog in RUNNERS:
+        return True
+    if prog == "ruff":
+        return bool(rest) and rest[0] == "check"
+    if prog in ("go", "cargo"):
+        return bool(rest) and rest[0] == "test"
+    if prog in ("npm", "yarn", "pnpm"):
+        return "test" in rest[:2]
+    if prog == "make":
+        return any(t in ("test", "check") for t in rest)
+    if prog in ("plan", "plan.py"):
+        return bool(rest) and rest[0] == "gate"
+    return False
+
+
+def is_check(cmd: str) -> bool:
+    return any(_is_check_step(step) for step in _steps(cmd))
+
+
 # Claude Code's Bash tool reports a failing command as a result that STARTS with "Exit code N"; the same words
 # later in passing output ("the child exited with code 1 as expected") are output, not a status.
 EXIT_LINE = re.compile(r"\A\s*Exit code (-?\d+)")
 
-
-def is_check(cmd: str) -> bool:
-    return any(CHECK_STEP.match(step) for step in re.split(r"&&|\|\||;|\n", cmd))
 # Strict on purpose: "Stop the server" is an instruction, not a correction.
 CORRECTION = re.compile(r"^\s*(no[,.!]|nope\b|don'?t\b|do not\b|wrong\b|that'?s (wrong|not)|not like that)"
                         r"|\b(instead of|use \S+ (instead|not))\b", re.I)

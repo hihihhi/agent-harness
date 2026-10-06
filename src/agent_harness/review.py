@@ -5,8 +5,10 @@
 
 No review tool blocks anything by default (Claude's check run is neutral, Copilot only comments), so the gate
 is here, and a missing or invalid findings file FAILS it: an absent review must never read as a clean one. A
-review is also bound to the code it read: the file records the base and a hash of the diff, and the gate
-recomputes it, so a review left over from last week, or written by hand, never passes for changes nobody read.
+review is also bound to the code it read: the file records the base commit, the untracked files and a hash of
+the diff, and the gate recomputes it, so a review left over from last week never passes for changes nobody
+read. (The hash binds a review to code, not to the fact that a reviewer ran: a file assembled by hand with the
+same hash would pass; the gate guards against stale reviews, not forged ones.)
 An empty diff is refused, not reviewed as clean (after a commit, review the branch with --base). The
 reviewer is the `review` routing tier in a fresh `claude -p` (or `codex exec`) context, told to verify each
 finding by reading the code or running a command before reporting it, because same-model agreement is not
@@ -47,32 +49,72 @@ Answer with the JSON object only: {{"findings": [...]}}. An empty list means you
 """
 
 
-def binding(root: Path, base: str, exclude: Tuple[str, ...] = ()) -> Optional[str]:
-    """sha256 of what a review reads: `git diff <base>` plus every untracked file, minus the findings file."""
+# Untracked files that appear after a review and look like source fail the gate (unreviewed code); anything
+# else that appears (.coverage, .hypothesis/, build output the reviewer's own test run left) does not.
+SOURCE_EXT = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".kt", ".rb", ".php",
+              ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".swift", ".sh", ".bash", ".zsh", ".sql", ".toml",
+              ".yaml", ".yml", ".tf", ".lua", ".pl", ".r", ".scala", ".vue", ".svelte"}
+
+
+def resolve_base(root: Path, base: str) -> Optional[str]:
+    """The commit `base` names, as a SHA, or None. Never passed to git as an option (`--output=...` is not a
+    ref), and stored as the SHA so committing the reviewed work does not unbind the review."""
     try:
-        d = subprocess.run(["git", "-C", str(root), "diff", base], capture_output=True, timeout=120)
+        p = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet", "--end-of-options",
+                            base + "^{commit}"], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    sha = p.stdout.strip()
+    return sha if p.returncode == 0 and re.fullmatch(r"[0-9a-f]{40,64}", sha) else None
+
+
+def _untracked(root: Path, skip: set) -> Optional[list]:
+    try:
         u = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard", "-z"],
                            capture_output=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if d.returncode != 0 or u.returncode != 0:
+    if u.returncode != 0:
         return None
+    return sorted(x for x in u.stdout.decode("utf-8", "replace").split("\0")
+                  if x and str((root / x).resolve()) not in skip)
+
+
+def snapshot(root: Path, sha: str, exclude: Tuple[str, ...] = (), untracked: Optional[list] = None):
+    """(sha256 over every file the change touches, the untracked list), or (None, None) on a git error, or
+    ("", list) when there is nothing to review. A file is hashed as its path and its current bytes, so the
+    same code hashes the same whether it is untracked, staged or committed since `sha` (committing the
+    reviewed work does not unbind the review). The findings file itself is excluded, wherever it lives."""
     skip = {str(Path(x).resolve()) for x in exclude}
-    h = hashlib.sha256(d.stdout)
-    untracked = 0
-    for rel in sorted(x for x in u.stdout.decode("utf-8", "replace").split("\0") if x):
-        p = (root / rel)
-        if str(p.resolve()) in skip:
-            continue
-        untracked += 1
+    rel_skip = []
+    for x in exclude:
+        try:
+            rel_skip.append(str(Path(x).resolve().relative_to(root.resolve())))
+        except ValueError:
+            pass
+    cmd = ["git", "-C", str(root), "diff", "--name-only", "-z", sha, "--", "."] + \
+          [":(exclude)%s" % r for r in rel_skip]
+    try:
+        d = subprocess.run(cmd, capture_output=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None, None
+    if d.returncode != 0:
+        return None, None
+    if untracked is None:
+        untracked = _untracked(root, skip)
+        if untracked is None:
+            return None, None
+    changed = sorted(set(x for x in d.stdout.decode("utf-8", "replace").split("\0") if x) | set(untracked))
+    if not changed:
+        return "", untracked
+    h = hashlib.sha256()
+    for rel in changed:
         h.update(b"\0" + rel.encode() + b"\0")
         try:
-            h.update(p.read_bytes())
+            h.update((root / rel).read_bytes())
         except OSError:
-            pass
-    if not d.stdout.strip() and not untracked:
-        return ""                                    # nothing to review
-    return h.hexdigest()
+            h.update(b"\0deleted")
+    return h.hexdigest(), untracked
 
 
 def gate(path: str, root: Optional[Path] = None) -> Tuple[int, str]:
@@ -88,11 +130,20 @@ def gate(path: str, root: Optional[Path] = None) -> Tuple[int, str]:
                 or not all(isinstance(f.get(x), str) and f.get(x) for x in ("file", "summary")):
             return 2, "review: finding %d in %s is malformed (%r); fix the review, it is not passed" % (k, path, f)
     rv = data.get("reviewed") if isinstance(data.get("reviewed"), dict) else {}
-    if not rv.get("diff_sha256") or not rv.get("base"):
-        return 2, "review: %s is not tied to any code (no reviewed base and diff hash); run harness review --run" % path
-    now = binding(Path(root or Path.cwd()), str(rv["base"]), exclude=(path,))
+    if not rv.get("diff_sha256") or not rv.get("base") or not isinstance(rv.get("untracked"), list):
+        return 2, "review: %s is not tied to any code (no reviewed base, diff hash and file list); run harness " \
+                  "review --run" % path
+    root = Path(root or Path.cwd())
+    sha = resolve_base(root, str(rv["base"]))
+    if sha is None:
+        return 2, "review: the reviewed base %r is not a commit here" % rv["base"]
+    now, _ = snapshot(root, sha, exclude=(path,), untracked=[str(x) for x in rv["untracked"]])
     if now != rv["diff_sha256"]:
-        return 1, "review: the code changed since %s was reviewed (against %s); review it again" % (path, rv["base"])
+        return 1, "review: the code changed since %s was reviewed (against %s); review it again" % (path, sha[:12])
+    new = [x for x in (_untracked(root, {str(Path(path).resolve())}) or []) if x not in rv["untracked"]
+           and Path(x).suffix.lower() in SOURCE_EXT]
+    if new:
+        return 1, "review: source files added since the review were never reviewed: %s" % ", ".join(new[:5])
     must = [f for f in found if f["severity"] == "must-fix"]
     if must:
         lines = ["  %s:%s %s" % (f.get("file", "?"), f.get("line", "?"), f.get("summary", "")) for f in must]
@@ -147,9 +198,14 @@ def _parse(stdout: str) -> Optional[dict]:
 
 def run(base: Optional[str], out: str, home: Path, timeout: int = 1800, root: Optional[Path] = None) -> Tuple[int, str]:
     root = Path(root or Path.cwd())
-    bound = binding(root, base or "HEAD", exclude=(out,))
+    sha = resolve_base(root, base or "HEAD")
+    if sha is None:
+        return 2, "review: %r is not a commit in a git repository here" % (base or "HEAD")
+    # The snapshot is taken BEFORE the reviewer runs: what it may leave behind (a .coverage from running the
+    # tests) is not part of what was reviewed, and an edit it makes to tracked code unbinds the review.
+    bound, untracked = snapshot(root, sha, exclude=(out,))
     if bound is None:
-        return 2, "review: not a git repository, or `git diff %s` failed" % (base or "HEAD")
+        return 2, "review: `git diff %s` failed" % sha[:12]
     if bound == "":
         return 2, "review: nothing to review (the diff against %s is empty); after a commit, use --base REF" % (
             base or "HEAD")
@@ -193,7 +249,7 @@ def run(base: Optional[str], out: str, home: Path, timeout: int = 1800, root: Op
     if not isinstance(found, dict) or not isinstance(found.get("findings"), list):
         return 2, "review: the reviewer returned no findings object (exit %s): %s" % (
             p.returncode, (p.stdout or p.stderr)[-300:])
-    found["reviewed"] = {"base": base or "HEAD", "diff_sha256": bound}
+    found["reviewed"] = {"base": sha, "untracked": untracked, "diff_sha256": bound}
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(json.dumps(found, indent=1) + "\n", encoding="utf-8")
     n = len(found["findings"])

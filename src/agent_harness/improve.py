@@ -110,7 +110,7 @@ def apply(hh: Path, pid: str, eval_path: str = None) -> Tuple[int, str]:
 
 
 def trend(history: str, release: str = None) -> Tuple[int, str]:
-    """`release` (default: the last version in the file) against the release before it, per tool: fewer passes,
+    """`release` (default: this harness's own version) against the release before it, per tool: fewer passes,
     or more than +15% tokens for the same passes, is a regression. Refused as well: no history, a release
     recorded twice for a tool (it would hide the first result), a tool the previous release measured and this
     one did not, and a row with no tasks."""

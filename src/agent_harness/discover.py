@@ -244,7 +244,7 @@ def install(rec_id: str, approve: Optional[str], override: bool, hh: Path, catal
         return p.returncode, "discover: install exited %d: %s" % (p.returncode, (p.stderr or p.stdout)[-300:])
     ok, why = verify_installed(rec)
     if not ok:
-        return 1, "discover: %s; it was removed again. %s" % (why, rollback(rec))
+        return 1, "discover: %s. %s" % (why, rollback(rec))
     hh.mkdir(parents=True, exist_ok=True)
     entry = {"id": rec_id, "ref": rec.get("ref"), "approved": digest, "command": cmd, "verdict": verdict,
              "override": bool(override), "when": time.strftime("%Y-%m-%dT%H:%M:%S")}
@@ -259,21 +259,25 @@ def verify_installed(rec: dict) -> Tuple[bool, str]:
     if not (rec.get("tool") == "claude-code" and rec.get("kind") == "plugin"):
         return True, ""
     d = _json(["claude", "plugin", "list", "--json"])
-    got = next((str(p.get("version") or "") for p in (d.get("installed") if isinstance(d, dict) else None) or []
-                if p.get("id") == rec.get("id")), None)
-    want = str(rec.get("ref") or "")
+    rows = d if isinstance(d, list) else (d.get("installed") if isinstance(d, dict) else None) or []
+    got = next((str(p.get("version") or "") for p in rows if isinstance(p, dict) and p.get("id") == rec.get("id")
+                and p.get("scope") == "project"), None)    # the copy this install made, not a user-scope one
+    want = str(rec.get("ref") or "").lower()
     if not got:
         return False, "could not read back which commit of %s was installed" % rec.get("id")
-    if not (len(got) >= 7 and want.startswith(got)):
+    g = got.lower()
+    if not (len(g) >= 7 and (want.startswith(g) or g.startswith(want))):
         return False, "installed commit %s is not the approved %s" % (got, want[:12])
     return True, ""
 
 
 def rollback(rec: dict) -> str:
     try:
-        p = subprocess.run(["claude", "plugin", "uninstall", str(rec.get("id"))], capture_output=True, text=True,
-                           timeout=300, stdin=subprocess.DEVNULL)
-        return "Uninstalled." if p.returncode == 0 else "Uninstall exited %d: remove it by hand" % p.returncode
+        p = subprocess.run(["claude", "plugin", "uninstall", str(rec.get("id")), "--scope", "project"],
+                           capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+        return "Uninstalled from the project scope." if p.returncode == 0 else (
+            "The uninstall exited %d, so it may still be installed: remove it by hand "
+            "(claude plugin uninstall %s --scope project)" % (p.returncode, rec.get("id")))
     except (OSError, subprocess.TimeoutExpired) as e:
         return "Uninstall failed (%s): remove it by hand" % e
 

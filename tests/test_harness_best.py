@@ -85,8 +85,9 @@ class TestReview(Base):
         f = repo / "review.json"
         if content is not None:
             if isinstance(content, dict) and "findings" in content:
-                content = dict(content, reviewed={"base": "HEAD",
-                                                   "diff_sha256": review.binding(repo, "HEAD", exclude=(str(f),))})
+                sha = review.resolve_base(repo, "HEAD")
+                h, untracked = review.snapshot(repo, sha, exclude=(str(f),))
+                content = dict(content, reviewed={"base": sha, "untracked": untracked, "diff_sha256": h})
             f.write_text(content if isinstance(content, str) else json.dumps(content))
         elif f.exists():
             f.unlink()
@@ -198,8 +199,8 @@ class TestDiscover(Base):
 
     def test_install_runs_only_the_exact_command_the_user_approved(self):
         # the stub reports the approved commit as installed (install is verified against it)
-        stub(self.bin, "claude", 'if [ "$1 $2" = "plugin list" ]; then echo \'{"installed": [{"id": '
-             '"pg-tools@official", "version": "0123456789ab"}]}\'; exit 0; fi\nprintf "%s\\n" "$@" > "$STUB_ARGV"\n')
+        stub(self.bin, "claude", 'if [ "$1 $2" = "plugin list" ]; then echo \'[{"id": "pg-tools@official", '
+             '"version": "0123456789ab", "scope": "project"}]\'; exit 0; fi\nprintf "%s\\n" "$@" > "$STUB_ARGV"\n')
         args = ("discover", "--install", "pg-tools@official", "--catalog", str(self.cat))
         rc, text = harness(self.home, *args, env=self.env)
         self.assertNotEqual(rc, 0, "installed without approval")
@@ -620,8 +621,8 @@ class TestReviewFindings(Base):
 
     def test_an_item_found_by_a_search_can_be_installed(self):
         """install must find what search found (it rebuilt the catalogue with an empty search term)."""
-        stub(self.bin, "claude", 'if [ "$1 $2" = "plugin list" ]; then echo \'{"installed": [{"id": '
-             '"pg-tools@official", "version": "0123456789ab"}]}\'; exit 0; fi\nprintf "%s\\n" "$@" > "$STUB_ARGV"\n')
+        stub(self.bin, "claude", 'if [ "$1 $2" = "plugin list" ]; then echo \'[{"id": "pg-tools@official", '
+             '"version": "0123456789ab", "scope": "project"}]\'; exit 0; fi\nprintf "%s\\n" "$@" > "$STUB_ARGV"\n')
         cat = self.tmp / "c.json"
         cat.write_text(json.dumps(CATALOG))
         from agent_harness import discover as D
@@ -809,7 +810,8 @@ class TestV041(Base):
         self.assertNotEqual(D.vet(mcp)[0], "block", "an npm package at an exact version is immutable")
 
     def install_with_listed_version(self, listed):
-        listing = json.dumps({"installed": [{"id": "pg-tools@official", "version": listed}], "available": []})
+        listing = json.dumps([{"id": "pg-tools@official", "version": listed, "scope": "user"},   # real shape:
+                              {"id": "pg-tools@official", "version": listed, "scope": "project"}])  # a bare list
         stub(self.bin, "claude", 'echo "$@" >> "$STUB_ARGV"\n'
              'if [ "$1 $2" = "plugin list" ]; then echo \'%s\'; fi\n' % listing)
         cat = self.tmp / "c.json"
@@ -822,7 +824,7 @@ class TestV041(Base):
     def test_an_install_that_is_not_the_approved_commit_is_removed(self):
         rc, text = self.install_with_listed_version("ffffffffffff")
         self.assertNotEqual(rc, 0, text)
-        self.assertIn("plugin uninstall pg-tools@official", self.argv.read_text())
+        self.assertIn("plugin uninstall pg-tools@official --scope project", self.argv.read_text())
         self.assertFalse((self.hh() / "installed-extensions.jsonl").exists())
 
     def test_the_approved_commit_installed_is_recorded(self):
@@ -957,6 +959,115 @@ class TestV041(Base):
                         bad.append("%s:%d" % (f.name, n))
         self.assertEqual(bad, [])
 
+
+class TestV041b(Base):
+    """The fresh-context verification of v0.4.1 (M1-M5, S1-S6), each a test that failed before its fix."""
+
+    def test_install_reads_back_the_project_copy_not_a_user_one(self):
+        from agent_harness import discover as D
+        rows = [{"id": "x@m", "version": "ffffffffffff", "scope": "user"},
+                {"id": "x@m", "version": "0123456789ab", "scope": "project"}]
+        with mock.patch.object(D, "_json", return_value=rows):
+            ok, why = D.verify_installed({"tool": "claude-code", "kind": "plugin", "id": "x@m",
+                                          "ref": "0123456789abcdef0123456789abcdef01234567"})
+        self.assertTrue(ok, why)
+
+    def test_a_base_that_looks_like_an_option_never_reaches_git(self):
+        repo = git_repo(self.tmp / "inj")
+        (repo / "a.py").write_text("x\n")
+        victim = self.tmp / "victim.txt"
+        victim.write_text("precious")
+        f = repo / "r.json"
+        f.write_text(json.dumps({"findings": [], "reviewed": {"base": "--output=%s" % victim, "untracked": [],
+                                                              "diff_sha256": "0" * 64}}))
+        self.assertNotEqual(harness(self.home, "review", "--gate", str(f), cwd=repo)[0], 0)
+        self.assertEqual(victim.read_text(), "precious")
+
+    def bound(self):
+        repo = git_repo(self.tmp / "b")
+        (repo / "a.py").write_text("x = 1\n")
+        stub(self.bin, "claude", 'touch .coverage\n'   # a reviewer that runs the tests leaves an artefact
+             'echo \'{"type":"result","is_error":false,"structured_output":{"findings":[]}}\'\n')
+        out = repo / ".agent-harness-review.json"
+        rc, text = harness(self.home, "review", "--run", "--out", str(out), env=self.env, cwd=repo)
+        self.assertEqual(rc, 0, text)
+        return repo, out
+
+    def test_the_reviewers_own_artefacts_do_not_unbind_the_review(self):
+        repo, out = self.bound()
+        self.assertTrue((repo / ".coverage").exists())
+        self.assertEqual(harness(self.home, "review", "--gate", str(out), cwd=repo)[0], 0)
+
+    def test_committing_the_reviewed_work_keeps_the_review(self):
+        repo, out = self.bound()
+        subprocess.run(["git", "-C", str(repo), "add", "a.py"], check=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "w"],
+                       check=True)
+        self.assertEqual(harness(self.home, "review", "--gate", str(out), cwd=repo)[0], 0)
+
+    def test_a_new_source_file_after_the_review_fails_the_gate(self):
+        repo, out = self.bound()
+        (repo / "new.py").write_text("unreviewed = True\n")
+        self.assertNotEqual(harness(self.home, "review", "--gate", str(out), cwd=repo)[0], 0)
+
+    def test_the_scanner_reads_past_a_non_utf8_byte(self):
+        d = Path(tempfile.mkdtemp(prefix="scan-"))
+        subprocess.run(["git", "init", "-q", str(d)], check=True)
+        (d / "scripts").mkdir()
+        (d / "scripts" / "secret-scan.sh").write_text(SCAN.read_text())
+        (d / "f.txt").write_bytes(b"caf\xe9\ncd /Users/somebody/x\n")   # secret-scan: allow
+        p = subprocess.run(["bash", "scripts/secret-scan.sh", "--tree-only"], cwd=d, capture_output=True, text=True,
+                           env=dict(os.environ, SECRET_SCAN_EXTRA="", LC_ALL="en_US.UTF-8"))
+        self.assertNotEqual(p.returncode, 0, p.stdout + p.stderr)
+
+    def test_removing_an_allowed_part_cannot_join_a_real_one_into_a_miss(self):
+        self.assertNotEqual(TestReviewItems.scan(self, "/Users/somebody/home/user/project"), 0)   # secret-scan: allow
+
+    def test_the_check_detector_on_real_shapes(self):
+        from agent_harness.capture import is_check
+        for c in (".venv/bin/python -m pytest -q", "uv run python -m pytest", "env X=1 pytest", "timeout 600 pytest",
+                  "time pytest", "sudo -u ci pytest", "xvfb-run pytest", "make -C sub test", "ruff check ."):
+            self.assertTrue(is_check(c), c)
+        for c in ("grep -rn pytest docs/", "git commit -F - <<'EOF'\npytest -q now green\nEOF", "echo 'a && ruff'",
+                  "pytest --version", "ruff format ."):
+            self.assertFalse(is_check(c), c)
+
+    def test_run_does_not_send_a_second_interrupt(self):
+        src = (ROOT / "src" / "agent_harness" / "cli.py").read_text()
+        body = src[src.index("def cmd_run"):src.index("\ndef ", src.index("def cmd_run") + 5)]
+        self.assertNotIn("send_signal(signal.SIGINT)", body)
+        self.assertIn("PYTHONUNBUFFERED", body)
+
+    def test_every_skip_names_an_environmental_reason(self):
+        """Every skip shape (skipTest, skip decorators, pytest.skip/importorskip/mark.skip, SkipTest, and an
+        `except ImportError` that returns or passes) must name an allowed, environmental reason in its code,
+        comments stripped (a comment saying "tomllib" must not excuse a skip)."""
+        import io as _io
+        import tokenize
+        allowed = ("tomllib", "HARNESS_LIVE", "root reads", "no git history", "no release tag")
+        shape = re.compile(r"skipTest\(|\.skip\(|skipIf\(|skipUnless\(|importorskip\(|mark\.skip|SkipTest\(")
+        bad = []
+        for f in (ROOT / "tests").glob("test_*.py"):
+            src = f.read_text()
+            lines = src.splitlines()
+            code = src.splitlines()                  # also strings blanked: a skip quoted as test data is data
+            for tok in tokenize.generate_tokens(_io.StringIO(src).readline):
+                (r1, c1), (r2, c2) = tok.start, tok.end
+                if tok.type == tokenize.COMMENT:
+                    lines[r1 - 1] = lines[r1 - 1][:c1]
+                    code[r1 - 1] = code[r1 - 1][:c1]
+                elif tok.type == tokenize.STRING and r1 == r2:
+                    code[r1 - 1] = code[r1 - 1][:c1] + '""' + code[r1 - 1][c2:]
+            for n, line in enumerate(code, 1):
+                if f.name == "test_harness_best.py" and ("shape = re.compile" in lines[n - 1]
+                                                         or "allowed = (" in lines[n - 1]):
+                    continue
+                if shape.search(line) and not any(a in " ".join(lines[n - 1:n + 2]) for a in allowed):
+                    bad.append("%s:%d" % (f.name, n))
+                if re.match(r"\s*except ImportError", line) and n < len(lines) \
+                        and re.match(r"\s*(return|pass)\b", lines[n]):
+                    bad.append("%s:%d except ImportError: %s" % (f.name, n, lines[n].strip()))
+        self.assertEqual(bad, [])
 
 if __name__ == "__main__":
     unittest.main()

@@ -662,13 +662,18 @@ def cmd_run(args) -> int:
     # Streamed line by line: a drain runs for hours, and its round status, held nodes and gate failures are
     # what the person watching needs while it runs, not after; Ctrl-C reaches the engine as SIGINT.
     p = subprocess.Popen([str(engine), "run", args.slug, "--workers", str(max(1, args.workers))],
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                         env=dict(os.environ, PYTHONUNBUFFERED="1"))
     try:
         for line in p.stdout:
             _out(line.rstrip("\n"))
         return p.wait()
     except KeyboardInterrupt:
-        p.send_signal(signal.SIGINT)
+        # The terminal's Ctrl-C already reached the engine (same process group). A second SIGINT would land in
+        # its cleanup and leave claimed nodes leased for hours, so: ignore further ones and let it finish.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        for line in p.stdout:
+            _out(line.rstrip("\n"))
         p.wait()
         return 130
 

@@ -34,7 +34,14 @@ scan_ident() {
   # Read stdin ONCE. This used to grep stdin twice; the first grep consumed all of it, so the EXTRA
   # patterns ran over nothing and could never match (found in v0.3 by planting a word and seeing PASS).
   local in; in=$(cat)
-  printf '%s\n' "$in" | sed -E -e '/secret-scan: allow/s/.*//' -e "s#$ALLOW_ID##g" | grep -nE -- "$IDENT"
+  # LC_ALL=C: BSD sed in a UTF-8 locale stops at the first invalid byte, and the rest of the file went unscanned.
+  # The allowed text becomes a separator, not nothing: deleting it joined its neighbours into a non-match.
+  # Found lines are printed as written, not as edited.
+  local n
+  for n in $(printf '%s\n' "$in" | LC_ALL=C sed -E -e '/secret-scan: allow/s/.*//' -e "s#$ALLOW_ID#/_/#g" \
+             | LC_ALL=C grep -nE -- "$IDENT" | cut -d: -f1); do
+    printf '%s:%s\n' "$n" "$(printf '%s\n' "$in" | LC_ALL=C sed -n "${n}p")"
+  done
   [ -n "$EXTRA" ] && printf '%s\n' "$in" | grep -nEi -- "$EXTRA"
   return 0
 }

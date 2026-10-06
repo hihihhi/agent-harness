@@ -286,10 +286,7 @@ class Profile(Base):
         self.assertIn("Use /data for datasets.", rules)
         self.assertNotIn("rules.md", rules.split("## Knowledge index", 1)[0])  # the value is a file name
         self.assertTrue((self.hh / "profile" / "SERVER.md").is_file())
-        try:
-            from agent_harness.mcp import kb  # noqa: F401
-        except ImportError:
-            return
+        from agent_harness.mcp import kb  # noqa: F401  (missing would be a failure, not a silent pass)
         self.assertIn("## Knowledge index\n", rules)
         index = rules.split("## Knowledge index", 1)[1]
         self.assertIn("SERVER.md", index)
