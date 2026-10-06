@@ -237,8 +237,7 @@ class Doctor(Base):
         self.assertEqual(self.install("--yes")[0], 0)
         rc, out = run(self.home, "doctor")
         server = ROOT / "src" / "agent_harness" / "mcp" / "server.py"
-        if not server.is_file():
-            self.skipTest("A1's MCP server not present")
+        self.assertTrue(server.is_file(), "the MCP server is missing")
         self.assertEqual(rc, 0, out)
         self.assertIn("answers tools/list", out)
 
@@ -319,8 +318,7 @@ class Profile(Base):
 
     def test_example_profile_parses_on_this_python(self):
         ex = ROOT / "profiles" / "example"
-        if not (ex / "profile.toml").is_file():
-            self.skipTest("A4's example profile not present")
+        self.assertTrue((ex / "profile.toml").is_file(), "the example profile is missing")
         prof = I.load_profile(ex)
         self.assertEqual(I._MiniToml((ex / "profile.toml").read_text()).parse(), prof)
         self.assertIsInstance(prof["warmup"]["plugins"], list)
@@ -332,14 +330,10 @@ class Profile(Base):
 class Extensions(Base):
     def setUp(self):
         super().setUp()
-        try:
-            from agent_harness import extensions as X
-        except ImportError:
-            self.skipTest("A3's extensions module not present")
+        from agent_harness import extensions as X
         self.X = X
         cat = ROOT / "content" / X.CATALOG
-        if not cat.is_file():
-            self.skipTest("content/extensions.toml not present")
+        self.assertTrue(cat.is_file(), "content/extensions.toml is missing")
         shutil.copy(cat, self.src / "content" / X.CATALOG)
 
     def test_editor_cli_never_runs_for_a_home_override(self):

@@ -2326,6 +2326,12 @@ def cmd_run(a):
     capped = True
 
     for rnd in range(1, a.max_rounds + 1):
+        # A kill switch a human can pull without a terminal: plan/<slug>.STOP halts the next round before
+        # anything is claimed or dispatched (SIGINT stops a round in flight).
+        stop = os.path.splitext(plan_path(slug))[0] + ".STOP"
+        if os.path.exists(stop):
+            print(f"STOP: {stop} exists, so nothing is dispatched; remove it to continue")
+            return 3
         _, _, nodes, order, mal = load(slug)
         st = analyse(nodes, order, mal)
 

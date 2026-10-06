@@ -249,6 +249,11 @@ def cmd_uninstall(args) -> int:
 
 
 def cmd_status(args) -> int:
+    if getattr(args, "matrix", False):
+        from . import matrix
+        m = matrix.matrix(sorted(all_adapters()))
+        _out(json.dumps(m, indent=1) if args.json else matrix.render(m))
+        return 0
     home, hh = _paths(args)
     state = I.load_state(hh)
     if not state:
@@ -319,9 +324,20 @@ def cmd_doctor(args) -> int:
               "the server did not answer; run it by hand: " + " ".join(shlex.quote(x) for x in I.mcp_cmd(hh)))
     else:
         check(False, "MCP server present", f"{server} missing; run `harness update`")
+    from . import storage
+    try:
+        storage.prune(hh)                        # every store back under its own cap first
+    except OSError as e:
+        _out(f"[info] pruning stopped early: {e}")
     size = I.dir_size(hh)
     cap = WARM_CAP if state.get("extra_mcp") else BASE_CAP
-    check(size < cap, f"disk footprint {size / MB:.1f} MB (cap {cap // MB} MB)", "over the cap")
+    rep = storage.report(hh, apparent=True)
+    check(size < cap, f"disk footprint {size / MB:.1f} MB (cap {cap // MB} MB)",
+          "over the cap; largest: " + ", ".join(f"{n} {storage.human(b)}" for n, b in rep["largest"][:3]))
+    cc = home / ".claude" / "projects"
+    if cc.is_dir():
+        _out(f"[info] Claude Code's own transcripts {storage.human(I.dir_size(cc))} in {cc} (not the harness's; "
+             "Claude Code keeps them for cleanupPeriodDays)")
     return 0 if all(checks) else 1
 
 
@@ -519,6 +535,11 @@ def stop_hook(stdin=None) -> int:
     no passing run_checks covers the current files; without it, ask for the checks. Never loops."""
     try:
         data = json.loads((stdin or sys.stdin).read() or "{}")
+        try:   # candidate lessons first, also after the harness's own block: its marker records a turn once
+            from . import capture
+            capture.capture_turn(I.harness_home(Path.home()), data["transcript_path"], str(data.get("session_id")))
+        except Exception:
+            pass
         if data.get("stop_hook_active"):
             return 0
         last_user, edited, n_tools, skill_saved = None, False, 0, False
@@ -587,6 +608,67 @@ def prompt_hook(stdin=None) -> int:
     return 0
 
 
+def cmd_improve(args) -> int:
+    from . import improve
+    _, hh = _paths(args)
+    if args.trend:
+        rc, msg = improve.trend(args.trend, args.release)
+    elif args.apply:
+        rc, msg = improve.apply(hh, args.apply, args.eval)
+    elif args.propose:
+        props = improve.propose(hh)
+        rc = 0
+        msg = json.dumps(props, indent=1) if args.json else "\n".join(
+            "%s  seen %sx  [%s] %s" % (p["id"], p["count"], p["source"], p["summary"]) for p in props) or \
+            "improve: nothing has recurred yet"
+    else:
+        rc, msg = 2, "harness improve: --propose, --apply ID --eval FILE, or --trend HISTORY"
+    _out(msg)
+    return rc
+
+
+def cmd_discover(args) -> int:
+    from . import discover as D
+    _, hh = _paths(args)
+    if args.install:
+        rc, msg = D.install(args.install, args.approve, args.override, hh, args.catalog, not args.no_network)
+        _out(msg)
+        return rc
+    if not args.need.strip():
+        _out("harness discover: say what you need, e.g. harness discover \"postgres\"")
+        return 2
+    recs = D.search(args.need, args.catalog, not args.no_network, hh=hh)
+    _out(D.results_json(recs) if args.json else D.render(recs))
+    return 0
+
+
+def cmd_run(args) -> int:
+    """`plan run` from the harness's own engine: one node per worker, the node's routing tier, and only the
+    gate's exit code marks a node done. plan/<slug>.STOP halts it between rounds."""
+    engine = I.PKG_DIR / "workgraph" / "bin" / "plan"
+    p = subprocess.run([str(engine), "run", args.slug, "--workers", str(max(1, args.workers))],
+                       capture_output=True, text=True)
+    _out((p.stdout + p.stderr).rstrip())
+    return p.returncode
+
+
+def cmd_review(args) -> int:
+    from . import review
+    if args.gate:
+        rc, msg = review.gate(args.gate)
+        _out(msg)
+        return rc
+    if not args.run:
+        _out("harness review: --run to review the changes, --gate FILE to check a review")
+        return 2
+    home, _ = _paths(args)
+    from .mcp.state import project_root
+    out = args.out or review.default_out(Path(project_root(None)))
+    rc, msg = review.run(args.base, out, home)
+    _out(msg)
+    return rc
+
+
 # ---------------------------------------------------------------- main
 
 def build_parser() -> argparse.ArgumentParser:
@@ -601,7 +683,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="show the plan, write nothing")
     p.add_argument("--source", help=argparse.SUPPRESS)
     sub.add_parser("uninstall", help="restore what was there before")
-    sub.add_parser("status", help="what is installed, for which tools")
+    p = sub.add_parser("status", help="what is installed, for which tools")
+    p.add_argument("--matrix", action="store_true", help="which tool gets which feature, and why not")
+    p.add_argument("--json", action="store_true")
     sub.add_parser("doctor", help="check the installation")
     p = sub.add_parser("warmup", help="build the knowledge index and install optional plugins")
     p.add_argument("--background", action="store_true")
@@ -616,6 +700,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ssh-cmd", help="ssh command to use (default: ssh)")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--config", action="store_true", help="save --remote/--ssh-cmd as the default")
+    p = sub.add_parser("improve", help="turn repeated lessons into proposals; apply one only behind an eval gain")
+    p.add_argument("--propose", action="store_true")
+    p.add_argument("--apply", metavar="ID")
+    p.add_argument("--eval", metavar="FILE", help="paired eval result for --apply")
+    p.add_argument("--trend", metavar="HISTORY", help="refuse a release that scores below the previous one")
+    p.add_argument("--release", help="the release --trend judges (default: the last one in the file)")
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("discover", help="find extensions for a need, vet them, install only what you approve")
+    p.add_argument("need", nargs="?", default="")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--catalog", help="a catalogue file instead of the live sources")
+    p.add_argument("--no-network", action="store_true", help="only the plugin lists the tools keep locally")
+    p.add_argument("--install", metavar="ID", help="install this item (needs --approve)")
+    p.add_argument("--approve", metavar="SHA256", help="the sha256 of the exact install command shown")
+    p.add_argument("--override", action="store_true", help="also install an item vetted as block")
+    p = sub.add_parser("run", help="drain a plan autonomously: each node to a worker on its tier, every gate run here")
+    p.add_argument("slug")
+    p.add_argument("--workers", type=int, default=2)
+    p = sub.add_parser("review", help="review the current changes in a fresh context; gate on must-fix")
+    p.add_argument("--run", action="store_true", help="run the reviewer on the diff and write the findings")
+    p.add_argument("--base", help="review the branch against this ref (default: uncommitted changes)")
+    p.add_argument("--out", help="findings file (default: .agent-harness-review.json in the project)")
+    p.add_argument("--gate", metavar="FILE", help="exit 0 only if FILE is a valid review with no must-fix")
     sub.add_parser("_hook-stop")
     sub.add_parser("_hook-prompt")
     return ap
@@ -624,7 +731,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     fn = {"install": cmd_install, "uninstall": cmd_uninstall, "status": cmd_status, "doctor": cmd_doctor,
-          "warmup": cmd_warmup, "update": cmd_update, "learn": cmd_learn, "sync": cmd_sync}.get(args.cmd)
+          "warmup": cmd_warmup, "update": cmd_update, "learn": cmd_learn, "sync": cmd_sync,
+          "review": cmd_review, "run": cmd_run, "discover": cmd_discover,
+          "improve": cmd_improve}.get(args.cmd)
     if args.cmd == "_hook-stop":
         return stop_hook()
     if args.cmd == "_hook-prompt":

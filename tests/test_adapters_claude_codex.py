@@ -194,10 +194,7 @@ class Codex(Ctxd):
         self.assertNotIn("mcp_servers", got)
 
     def test_gemini_trusts_only_our_server(self):
-        try:
-            from agent_harness.adapters.gemini import GeminiAdapter  # noqa: F401
-        except ImportError:
-            self.skipTest("A3's gemini adapter not present")
+        from agent_harness.adapters.gemini import GeminiAdapter  # noqa: F401
         g = all_adapters()["gemini"]
         (self.home / ".gemini").mkdir()
         (self.home / ".gemini" / "settings.json").write_text('{"mcpServers": {"mine": {"command": "x"}}}')
@@ -317,14 +314,11 @@ class Hooks(unittest.TestCase):
             self.assertEqual(buf.getvalue(), "")
 
     def test_recall_under_300ms_with_500_items(self):
-        try:
-            from agent_harness.mcp import memory as memmod
-        except ImportError:
-            self.skipTest("A1's memory module not present")
+        from agent_harness.mcp import memory as memmod
         env = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
         src = Path(memmod.__file__).read_text()
-        if "recall" not in src or "__main__" not in src:  # `-m` on a module without a CLI exits 0 silently
-            self.skipTest("A1's recall CLI not present yet")
+        # `-m` on a module without a CLI exits 0 silently, so its absence must fail here, not skip.
+        self.assertTrue("recall" in src and "__main__" in src, "the memory module lost its recall CLI")
         m = memmod.Memory(home=self.tmp / "hh")
         for i in range(500):
             m.mem_add(f"fact {i}: service{i % 37} listens on port {8000 + i} and logs to /var/log/s{i}.log",

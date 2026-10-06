@@ -78,7 +78,7 @@ def pairs(tool: str, inp: dict, path: Path):
 
 
 def relative(path: Path, cwd: str) -> str:
-    """The path inside its project (git root, else the session's cwd), so /home/Test/... or a checkout under
+    """The path inside its project (git root, else the session's cwd), so a home folder named Test/ or a checkout under
     a folder called test/ does not make every file look like a test."""
     d = path.parent
     for cand in (d,) + tuple(d.parents):

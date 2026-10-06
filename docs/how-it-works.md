@@ -76,6 +76,26 @@ each a sentence or two. At the start of related work, `lesson_search` brings bac
 relevant lessons, so the same mistake is not made twice, in any tool. Lessons are capped at 200;
 `harness learn` lists them, most used first.
 
+**Captured without being asked (v0.4, Claude Code).** The model forgets to call `lesson_add`, so the Stop
+hook also records candidates on its own, from the same two trustworthy signals only: a check (run_checks,
+`plan gate`, a test command) that failed and then passed in the same turn, and an explicit correction from
+you ("no, ...", "use X instead"). They are redacted, kept apart by source, deduplicated with a count, and
+written to `~/.agent-harness/candidates.jsonl`, never straight into lessons.
+
+**Getting better, only where measured.** `harness improve --propose` turns a candidate seen at least twice
+into a proposal; `--apply ID --eval FILE` adds it as a lesson only when a paired eval on the same tasks,
+naming that proposal, shows more passes at no more than +15% tokens. `--trend` refuses a release that scores
+below the release before it, per tool (`eval/results/history.jsonl`). Why this strict: skills agents wrote
+for themselves scored 8-11.5 points below no skills at all (SkillsBench), while curated ones gained 16.6, and
+lessons from a false signal made Reflexion worse.
+
+**Bounded on disk.** Every store the harness writes has a cap and is pruned as it is written: candidates
+500, the install ledger 1000, proposals 100, turn markers 200, backups the newest 3 plus every backup
+`installed.json` still needs and every uninstall stash (if `installed.json` cannot be read, none is pruned).
+Memory and lessons keep their own caps (500, 200). `harness doctor` holds the whole folder to its footprint
+cap (20 MB; 1 GB with the optional plugins) and names the largest parts when over it. Claude Code's own
+transcripts are reported, not touched.
+
 ## Past conversations: session_search
 
 "What did we decide about the partition key last week?" is often answered nowhere but in an earlier

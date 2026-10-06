@@ -1,0 +1,4 @@
+{"version": "0.2", "tool": "claude-code", "pass": 15, "n": 18, "source": "the author's paired server eval, 2026-10-06"}
+{"version": "0.2", "tool": "codex", "pass": 14, "n": 18, "source": "the author's paired server eval, 2026-10-06"}
+{"version": "0.3.3", "tool": "claude-code", "pass": 17, "n": 18, "source": "the author's paired server eval, 2026-10-06"}
+{"version": "0.3.3", "tool": "codex", "pass": 17, "n": 18, "source": "the author's paired server eval, 2026-10-06"}

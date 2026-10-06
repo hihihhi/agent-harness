@@ -171,6 +171,7 @@ bash scripts/demo.sh                    # install, doctor and the guard in a thr
 python3 content/hooks/guard.py --check "rm -rf ~"   # blocked, with the reason; exit 2
 python3 bin/harness install             # the real install: asks per tool, backs up every file first
 python3 bin/harness uninstall           # restores every backed-up file
+python3 bin/harness status --matrix     # which tool gets which feature (review, run, discover, improve, ...)
 ```
 
 A real install (without `--dry-run`) **replaces `~/.claude/CLAUDE.md`** and the other tools' instruction files

@@ -54,7 +54,11 @@ def load_state(hh: Path) -> dict:
 
 def save_state(hh: Path, state: dict) -> None:
     hh.mkdir(parents=True, exist_ok=True)
-    (hh / STATE).write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # Write-then-rename: the Stop hook's pruning reads this file every turn, and a half-written one must never
+    # be what it sees (it would forget which backups hold the user's original files).
+    tmp = hh / (STATE + ".tmp")
+    tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(hh / STATE)
 
 
 # ---------------------------------------------------------------- TOML (read)
