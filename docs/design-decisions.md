@@ -33,8 +33,8 @@ on 2026-10-03).
 ## History
 
 This harness replaces earlier one-tool setups:
-[claude-setup](https://github.com/Oscar-Codespace/claude-setup) and
-[copilot-setup](https://github.com/Oscar-Codespace/copilot-setup) (both started April 2026, now
+the earlier private setups claude-setup and
+copilot-setup (both started April 2026, now
 archived), then codex-setup (May 2026), agentic-os (July 2026) and claude-control (July 2026),
 which are private. Each configured one tool; agent-harness installs one set of rules, memory and
 checks for seven. v0.3 (October 2026) merges in agentic-os's work graph and its guard corpus, so the
