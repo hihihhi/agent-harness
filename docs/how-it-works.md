@@ -85,7 +85,8 @@ written to `~/.agent-harness/candidates.jsonl`, never straight into lessons.
 **Getting better, only where measured.** `harness improve --propose` turns a candidate seen at least twice
 into a proposal; `--apply ID --eval FILE` adds it as a lesson only when a paired eval on the same tasks,
 naming that proposal, shows more passes at no more than +15% tokens. `--trend` refuses a release that scores
-below the release before it, per tool (`eval/results/history.jsonl`). Why this strict: skills agents wrote
+more than one question below the best earlier release (the measured single-run noise), per tool and on the
+same questions, or that costs more than +15% tokens against the cheapest such release (`eval/results/history.jsonl`). Why this strict: skills agents wrote
 for themselves scored 8-11.5 points below no skills at all (SkillsBench), while curated ones gained 16.6, and
 lessons from a false signal made Reflexion worse.
 

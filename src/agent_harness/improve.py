@@ -155,9 +155,19 @@ def trend(history: str, release: str = None) -> Tuple[int, str]:
             lines.append("%s: measured in %s but not in %s" % (tool, prev_v, release))
             continue
         # Against the BEST earlier release, not only the previous one: compared step by step, one-question
-        # drops each pass and add up (17/18 down to 9/18 passed every step). Ties go to the latest.
+        # drops each pass and add up (17/18 down to 9/18 passed every step). Among equally good ones, the
+        # CHEAPEST measured one: taking the latest let the +15% allowance reset at every tie (18/18 at 2.6x the
+        # tokens passed every step) and made a refused release the next one's reference.
         earlier = [seen[(v, tool)] for v in versions[:i] if (v, tool) in seen]
-        best = max(reversed(earlier), key=lambda r: int(r["pass"]) / float(r["n"]))
+        top = max(int(r["pass"]) / float(r["n"]) for r in earlier)
+
+        def cost(r):
+            try:
+                t = float(r.get("tokens") or 0)
+            except (TypeError, ValueError):
+                t = 0.0
+            return t if t > 0 and math.isfinite(t) else float("inf")
+        best = min((r for r in earlier if int(r["pass"]) / float(r["n"]) == top), key=cost)
         if int(best["n"]) != int(cur["n"]):
             bad.append(tool)
             lines.append("%s: %s ran %s questions, %s ran %s; not the same eval" % (
@@ -171,10 +181,10 @@ def trend(history: str, release: str = None) -> Tuple[int, str]:
             return 1, "trend: a token count that is not a number in %s or %s for %s" % (best.get("version"), release, tool)
         measured = bt > 0 and ct > 0 and math.isfinite(bt) and math.isfinite(ct)   # "inf" is not a measurement
         tok_ok = measured and ct <= bt * (1 + TOKEN_OVERHEAD)
-        # Better: a higher pass rate, unless both sides measured tokens and it cost more than the keep rule's +15%.
-        # No worse: within ONE question of the best (the measured noise: one question of 18 passed 3 times in 4
-        # on the same build), and tokens measured and within +15% (a missing count is not "no overhead").
-        better = c_rate > b_rate and (tok_ok or not measured)
+        # Better: a higher pass rate at no more than +15% tokens. No worse: within ONE question of the best (the
+        # measured noise: one question of 18 passed 3 times in 4 on the same build) at no more than +15%. Either
+        # way the tokens must be measured on both sides: a missing count is not "no overhead".
+        better = c_rate > b_rate and tok_ok
         same = b_rate - c_rate <= 1.0 / n + 1e-12 and c_rate <= b_rate
         verdict = "ok" if better or (same and tok_ok) else "REGRESSION"
         lines.append("%s: best earlier %s %s/%s -> %s %s/%s %s" % (tool, best.get("version"), best["pass"],

@@ -526,6 +526,22 @@ class TestTrend(Base):
              {"version": "b", "tool": "codex", "pass": 3, "n": 4, "tokens": 1000}]
         self.assertNotEqual(self.check(r), 0)
 
+    def test_token_cost_cannot_creep_through_ties(self):
+        rows = [{"version": "v%d" % k, "tool": "codex", "pass": 18, "n": 18, "tokens": int(1000 * 1.149 ** k)}
+                for k in range(8)]
+        results = [self.check(rows[:k + 1]) for k in range(1, 8)]
+        self.assertIn(1, results, "18/18 at ever higher cost passed every step")
+        triple = [{"version": "a", "tool": "codex", "pass": 18, "n": 18, "tokens": 1000},
+                  {"version": "b", "tool": "codex", "pass": 18, "n": 18, "tokens": 3000},
+                  {"version": "c", "tool": "codex", "pass": 18, "n": 18, "tokens": 3000}]
+        self.assertNotEqual(self.check(triple[:2]), 0)
+        self.assertNotEqual(self.check(triple), 0, "a refused release became the next one's reference")
+
+    def test_a_gain_with_no_token_count_is_not_shown_better(self):
+        r = [{"version": "a", "tool": "codex", "pass": 17, "n": 18, "tokens": 1000},
+             {"version": "b", "tool": "codex", "pass": 18, "n": 18}]
+        self.assertNotEqual(self.check(r), 0)
+
     def test_no_history_is_not_a_pass(self):
         self.assertNotEqual(self.check([]), 0)
 
@@ -775,7 +791,7 @@ class TestReReview(Base):
                        tool_use("Bash", {"command": cmd}, "b"), tool_result("b", "ok")])
         self.assertNotIn("K" * 20, json.dumps(capture.candidates(str(t))))
 
-    def test_the_trend_needs_tokens_unless_the_pass_rate_rose(self):
+    def test_the_trend_needs_tokens_on_both_sides(self):
         def check(rows):
             f = self.tmp / "h.jsonl"
             f.write_text("".join(json.dumps(x) + "\n" for x in rows))
@@ -784,7 +800,9 @@ class TestReReview(Base):
                 {"version": "0.4", "tool": "codex", "pass": 17, "n": 18}]
         self.assertNotEqual(check(same), 0, "equal passes with no token count passed")
         rose = [{"version": "0.3", "tool": "codex", "pass": 16, "n": 18}, {"version": "0.4", "tool": "codex", "pass": 17, "n": 18}]
-        self.assertEqual(check(rose), 0)
+        self.assertNotEqual(check(rose), 0, "a gain needs measured tokens too (T2 review)")
+        measured = [dict(rose[0], tokens=1000), dict(rose[1], tokens=1100)]
+        self.assertEqual(check(measured), 0)
 
     def test_only_the_tools_own_installers_by_bare_name(self):
         from agent_harness import discover as D

@@ -18,7 +18,7 @@ Python 3.9 or newer, standard library only, under 20 MB. `harness` below is `pyt
 | `harness discover "<need>"` | search the Claude/Codex plugin lists, the MCP Registry and Open VSX; vet each item (pinned? hidden text? runs code?) |
 | `harness discover --install ID --approve SHA256` | install exactly the command shown, approved by its hash; a Claude Code plugin is checked afterwards against the approved commit and removed if it differs; recorded in `~/.agent-harness/installed-extensions.jsonl` |
 | `harness improve --propose` / `--apply ID --eval FILE` | lessons captured at each turn's end (a check that failed then passed, your corrections) that recur become proposals; one is applied only when a paired eval shows a gain within +15% tokens |
-| `harness improve --trend eval/results/history.jsonl [--release V]` | refuse a release (default: this version) that scores below the one before it, per tool, or that has no measured result |
+| `harness improve --trend eval/results/history.jsonl [--release V]` | refuse a release (default: this version) that scores more than one question below the best earlier release, per tool and on the same questions, or costs more than +15% tokens, or has no measured result |
 | `harness doctor` | also prunes every store to its cap and names the largest parts when the harness is over its footprint cap |
 
 A real install (without `--dry-run`) **replaces `~/.claude/CLAUDE.md`** and the other tools' instruction files
