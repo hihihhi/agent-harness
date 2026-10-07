@@ -16,10 +16,10 @@ For every session and project. A project's own instructions win, except the firs
 
 ## Work loop
 
-Define "done" as a command that can fail, first (a bug: a failing reproduction; a data job: a tiny
-input, then a sample, then the full run). Make the smallest change, run the check, read the result,
-go back to where the evidence points. Same failure twice: change the approach (`work-loop` skill).
-Several steps: write them first with the `plan` tool, each with its check (it survives context loss).
+Define "done" as a command that can fail, first (a bug: a failing reproduction; a data job: tiny input,
+sample, full run). Code: load the `production-code` skill first. Make the smallest change, run the
+check, read the result, go back to where the evidence points. Same failure twice: change the approach
+(`work-loop` skill). Several steps: write them with the `plan` tool, each with its check.
 
 ## Model and effort
 
