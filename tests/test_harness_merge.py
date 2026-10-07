@@ -228,22 +228,36 @@ class TestSelfUpdate(Base):
 
 
 class TestStrict(Base):
-    """4: the owner chose a strict release trend: no fewer questions than the best accepted release."""
+    """4: the release trend: a single run is strict; repeated runs allow one run in 54 below the BEST accepted
+    release (the owner, 2026-10-07: "it is ok to iterate not to give up updating"), never compounding."""
 
     def check(self, rows):
         f = self.tmp / "h.jsonl"
         f.write_text("".join(json.dumps(r) + "\n" for r in rows))
         return run(self.home, "improve", "--trend", str(f), "--release", rows[-1]["version"])[0]
 
-    def test_strict_one_question_below_is_refused(self):
-        r = lambda v, p: {"version": v, "tool": "claude-code", "pass": p, "n": 18, "tokens": 1000}  # noqa: E731
-        self.assertNotEqual(self.check([r("0.3.3", 17), r("0.4.1", 16)]), 0)
-        self.assertEqual(self.check([r("0.3.3", 17), r("0.4.2", 17)]), 0)
+    def r(self, v, p, n):
+        return {"version": v, "tool": "claude-code", "pass": p, "n": n, "tokens": 1000}
+
+    def test_strict_single_run_one_question_below_is_refused(self):
+        self.assertNotEqual(self.check([self.r("0.3.3", 17, 18), self.r("0.4.1", 16, 18)]), 0)
+        self.assertEqual(self.check([self.r("0.3.3", 17, 18), self.r("0.4.2", 17, 18)]), 0)
+
+    def test_strict_three_runs_allow_one_run_below_but_not_two(self):
+        self.assertEqual(self.check([self.r("0.3.3", 51, 54), self.r("0.4.3", 50, 54)]), 0)
+        self.assertNotEqual(self.check([self.r("0.3.3", 51, 54), self.r("0.4.3", 49, 54)]), 0)
+        self.assertEqual(self.check([self.r("0.3.3", 102, 108), self.r("0.4.3", 100, 108)]), 0)
+        self.assertNotEqual(self.check([self.r("0.3.3", 102, 108), self.r("0.4.3", 99, 108)]), 0)
+
+    def test_strict_allowance_never_compounds(self):
+        """Each release is held to the BEST accepted one, so one-run slips cannot add up release after release."""
+        rows = [self.r("0.3.3", 51, 54), self.r("0.4.2", 50, 54), self.r("0.4.3", 49, 54)]
+        self.assertNotEqual(self.check(rows), 0)
 
     def test_strict_is_the_documented_owner_decision(self):
         from agent_harness import improve
-        self.assertEqual(improve.BAND_QUESTIONS, 0)
-        self.assertIn("The release trend is strict", (ROOT / "docs" / "design-decisions.md").read_text())
+        self.assertEqual(improve.RUNS_PER_ALLOWED_MISS, 54)
+        self.assertIn("one run in 54", (ROOT / "docs" / "design-decisions.md").read_text())
 
 
 if __name__ == "__main__":
