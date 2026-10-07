@@ -3,5 +3,5 @@
 b482b219a346d25bf33818f1399a6d9e58e52385:tests/test_redact.py:generic-api-key:52
 
 # Deliberate fake credentials planted by the coding-quality eval (eval/quality_tasks.py, the leak dimension).
-86776d75abc43964a7a4a45c6bc7b90ee70205ba:eval/quality_tasks.py:generic-api-key:460
-86776d75abc43964a7a4a45c6bc7b90ee70205ba:eval/quality_tasks.py:generic-api-key:1529
+1fe1ff1e4afc360a5f8efc564cc86e376e2f1d29:eval/quality_tasks.py:generic-api-key:460
+1fe1ff1e4afc360a5f8efc564cc86e376e2f1d29:eval/quality_tasks.py:generic-api-key:1529
