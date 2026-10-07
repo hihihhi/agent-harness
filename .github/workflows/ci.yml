@@ -22,8 +22,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install pytest
-        run: python -m pip install pytest
+      - name: Install pytest and ruff (the quality eval's lint grader fails when ruff is absent, by design)
+        run: python -m pip install pytest ruff
       - name: Tests (harness, guard corpus, eval instrument)
         run: python -m pytest -q tests eval
       - name: Secret scan (scanner self-test, then working tree and history)
