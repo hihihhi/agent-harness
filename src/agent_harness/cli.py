@@ -299,6 +299,18 @@ def mcp_probe(cmd: List[str], timeout: float = 5.0) -> Optional[List[str]]:
     return None
 
 
+def cmd_explain(args) -> int:
+    from . import diagnose
+    home, _ = _paths(args)
+    path = args.session or diagnose.latest(args.client, home, None if args.client == "codex" else Path.cwd())
+    if not path:
+        _out("No %s session found." % args.client)
+        return 1
+    r = diagnose.explain(args.client, path, home)
+    _out(json.dumps(r, indent=1) if args.json else diagnose.render(r))
+    return 0
+
+
 def cmd_doctor(args) -> int:
     home, hh = _paths(args)
     state = I.load_state(hh)
@@ -739,6 +751,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("status", help="what is installed, for which tools")
     p.add_argument("--matrix", action="store_true", help="which tool gets which feature, and why not")
     p.add_argument("--json", action="store_true")
+    p = sub.add_parser("explain", help="what a session actually used: rules, skills, harness tools, checks, tokens")
+    p.add_argument("--client", choices=["claude-code", "codex"], default="claude-code")
+    p.add_argument("--session", help="transcript path (default: the newest for this client and folder)")
+    p.add_argument("--json", action="store_true")
     sub.add_parser("doctor", help="check the installation")
     p = sub.add_parser("warmup", help="build the knowledge index and install optional plugins")
     p.add_argument("--background", action="store_true")
@@ -788,7 +804,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    fn = {"install": cmd_install, "uninstall": cmd_uninstall, "status": cmd_status, "doctor": cmd_doctor,
+    fn = {"install": cmd_install, "uninstall": cmd_uninstall, "status": cmd_status, "doctor": cmd_doctor, "explain": cmd_explain,
           "warmup": cmd_warmup, "update": cmd_update, "learn": cmd_learn, "sync": cmd_sync,
           "review": cmd_review, "run": cmd_run, "discover": cmd_discover,
           "improve": cmd_improve, "self-update": cmd_self_update}.get(args.cmd)

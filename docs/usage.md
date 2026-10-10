@@ -10,6 +10,7 @@ Python 3.9 or newer, standard library only, under 20 MB. `harness` below is `pyt
 | `harness install --tools claude-code,codex` | only these tools |
 | `harness install --project .` | set up only the current project, not your user account |
 | `harness status` / `harness doctor` | what is installed, and is it healthy |
+| `harness explain [--client codex] [--session F] [--json]` | what a session actually used: rules installed / loaded, skills offered / invoked, harness tool calls, checks with exit codes, workers, compactions, tokens; anything the client does not record is NOT_OBSERVABLE |
 | `harness update` | refresh the rules and skills; memory and lessons are kept |
 | `harness uninstall` | restore every changed file from its backup and remove what was added |
 | `harness status --matrix` | which tool gets which feature, and why not where it does not |
